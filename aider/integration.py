@@ -32,6 +32,15 @@ from aider.health_check import HealthChecker, check_system_health
 from aider.performance_monitor import PerformanceMonitor, get_performance_monitor
 from aider.backup_restore import BackupManager, get_backup_manager
 from aider.notification_system import NotificationManager, get_notification_manager
+from aider.i18n import get_i18n_manager, set_language
+from aider.perf_dashboard import get_performance_dashboard
+from aider.error_handler import get_error_handler
+from aider.api_docs import get_api_docs
+from aider.feature_flags import get_feature_flag_manager, register_default_flags
+from aider.session_manager import get_session_manager
+from aider.code_quality_gates import get_code_quality_gates
+from aider.plugin_system import get_plugin_manager
+from aider.async_operations import get_async_manager
 
 
 class EnterpriseFeatures:
@@ -59,6 +68,15 @@ class EnterpriseFeatures:
         self._setup_performance_monitoring()
         self._setup_backup_manager()
         self._setup_notification_manager()
+        self._setup_i18n()
+        self._setup_perf_dashboard()
+        self._setup_error_handler()
+        self._setup_api_docs()
+        self._setup_feature_flags()
+        self._setup_session_manager()
+        self._setup_code_quality_gates()
+        self._setup_plugin_system()
+        self._setup_async_operations()
     
     def _setup_logging(self) -> None:
         """Setup enhanced logging."""
@@ -109,6 +127,45 @@ class EnterpriseFeatures:
         """Setup notification manager."""
         self.notification_manager = get_notification_manager()
     
+    def _setup_i18n(self) -> None:
+        """Setup internationalization."""
+        self.i18n_manager = get_i18n_manager()
+        # Set default language to English
+        set_language("en")
+    
+    def _setup_perf_dashboard(self) -> None:
+        """Setup performance dashboard."""
+        self.perf_dashboard = get_performance_dashboard()
+    
+    def _setup_error_handler(self) -> None:
+        """Setup error handler."""
+        self.error_handler = get_error_handler()
+    
+    def _setup_api_docs(self) -> None:
+        """Setup API documentation."""
+        self.api_docs = get_api_docs()
+    
+    def _setup_feature_flags(self) -> None:
+        """Setup feature flags."""
+        self.feature_flags = get_feature_flag_manager()
+        register_default_flags()
+    
+    def _setup_session_manager(self) -> None:
+        """Setup session manager."""
+        self.session_manager = get_session_manager()
+    
+    def _setup_code_quality_gates(self) -> None:
+        """Setup code quality gates."""
+        self.code_quality_gates = get_code_quality_gates()
+    
+    def _setup_plugin_system(self) -> None:
+        """Setup plugin system."""
+        self.plugin_manager = get_plugin_manager()
+    
+    def _setup_async_operations(self) -> None:
+        """Setup async operations."""
+        self.async_manager = get_async_manager()
+    
     def get_system_health(self):
         """Get current system health status."""
         return self.health_checker.check_all()
@@ -120,6 +177,8 @@ class EnterpriseFeatures:
     def shutdown(self):
         """Shutdown enterprise features gracefully."""
         self.performance_monitor.stop_monitoring()
+        self.session_manager.shutdown()
+        self.async_manager.cleanup()
 
 
 # Global enterprise features instance
