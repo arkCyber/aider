@@ -1209,7 +1209,10 @@ class InputOutput:
             message = Text(message)
 
         if bold:
-            message = Text(message, style="bold")
+            if isinstance(message, Text):
+                message = Text(str(message), style="bold")
+            else:
+                message = Text(message, style="bold")
 
         if self.pretty and self.tool_output_color:
             style = dict(style=self.tool_output_color)
