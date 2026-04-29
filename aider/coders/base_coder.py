@@ -516,6 +516,10 @@ class Coder:
 
         self.num_cache_warming_pings = num_cache_warming_pings
 
+        # Initialize reasoning content tracking attributes
+        self.got_reasoning_content = False
+        self.ended_reasoning_content = False
+
         if not fnames:
             fnames = []
 
