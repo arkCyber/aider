@@ -1,0 +1,41 @@
+# Translation file for aider
+# Language: 中文 (Chinese)
+
+# Translation Template for aider
+# This file is a template for creating translation files
+
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh\n"
+
+# Common messages
+msgid "AI Pair Programming in Your Terminal"
+msgstr "终端中的AI结对编程"
+
+msgid "Aider lets you pair program with LLMs to start a new project or build on your existing codebase."
+msgstr "Aider 让您与LLM结对编程，启动新项目或在现有代码库上构建。"
+
+msgid "Configuration validation failed"
+msgstr "配置验证失败"
+
+msgid "System health check"
+msgstr "系统健康检查"
+
+msgid "Performance monitoring"
+msgstr "性能监控"
+
+msgid "Backup created successfully"
+msgstr "备份创建成功"
+
+msgid "Notification sent"
+msgstr "通知已发送"
+
+msgid "Rate limit exceeded"
+msgstr "超过速率限制"
+
+msgid "Operation completed successfully"
+msgstr "操作成功完成"
+
+msgid "Error occurred"
+msgstr "发生错误"
