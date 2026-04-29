@@ -1,3 +1,17 @@
+"""
+Patch Coder Module
+
+This module implements the Patch Coder, which uses patch format for code
+modifications. It provides a structured approach to applying changes using
+standard patch format with add, delete, and update operations.
+
+Key Features:
+- Patch format editing
+- Structured diff operations (Add, Delete, Update)
+- Precise line-based modifications
+- Hunk-based patch application
+"""
+
 import pathlib
 from dataclasses import dataclass, field
 from enum import Enum

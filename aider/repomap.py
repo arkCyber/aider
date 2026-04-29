@@ -1,3 +1,18 @@
+"""
+Repository Map Module
+
+This module provides repository mapping and codebase understanding for the Aider AI
+coding assistant. It generates maps of the codebase structure to provide context
+to the AI model about file relationships and dependencies.
+
+Key Features:
+- Codebase structure mapping
+- AST-based code analysis
+- File dependency tracking
+- Token-efficient context representation
+- Cached map generation
+"""
+
 import colorsys
 import math
 import os

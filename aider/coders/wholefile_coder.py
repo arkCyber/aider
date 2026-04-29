@@ -1,3 +1,16 @@
+"""
+Whole File Coder Module
+
+This module implements the Whole File Coder, which operates on entire files
+for code modifications. This approach is useful for files that need to be
+completely rewritten or when the AI needs to see the entire file context.
+
+Key Features:
+- Entire file editing
+- Diff-style output
+- File context preservation
+"""
+
 from pathlib import Path
 
 from aider import diffs

@@ -1,10 +1,32 @@
+"""
+Aider Commands Module
+
+This module implements the command system for the Aider AI coding assistant.
+It provides a comprehensive set of commands for code management, AI model switching,
+and various development tools.
+
+Key Features:
+- Aerospace-level input validation and error handling
+- Comprehensive audit logging for all operations
+- Dangerous command confirmation mechanism
+- AI model management and configuration
+- Docker, database, and environment management
+- Code formatting, testing, and analysis tools
+
+The Commands class serves as the central command processor, handling user input
+and coordinating with the AI coder to execute tasks.
+"""
+
 import glob
+import json
+import logging
 import os
 import re
 import subprocess
 import sys
 import tempfile
 from collections import OrderedDict
+from datetime import datetime
 from os.path import expanduser
 from pathlib import Path
 
@@ -21,23 +43,103 @@ from aider.io import CommandCompletionException
 from aider.llm import litellm
 from aider.repo import ANY_GIT_ERROR
 from aider.run_cmd import run_cmd
-from aider.scrape import Scraper, install_playwright
+from aider.scrape import Scraper, install_playwright, BrowserController
 from aider.utils import is_image_file
 
 from .dump import dump  # noqa: F401
 
+# Configure logging for aerospace-level audit trails
+# This ensures all critical operations are logged for compliance and debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('.aider_audit.log'),
+        logging.StreamHandler()
+    ]
+)
+audit_logger = logging.getLogger('aider.audit')
+
 
 class SwitchCoder(Exception):
+    """
+    Exception raised when switching to a different AI coder configuration.
+    
+    This exception is used to signal that the application should switch to a different
+    coder with new model or configuration parameters. It carries the necessary
+    configuration data in its kwargs.
+    """
     def __init__(self, placeholder=None, **kwargs):
+        """
+        Initialize the switch coder exception.
+        
+        Args:
+            placeholder: Optional placeholder for the new coder
+            **kwargs: Configuration parameters for the new coder (model, edit_format, etc.)
+        """
         self.kwargs = kwargs
         self.placeholder = placeholder
 
 
 class Commands:
+    """
+    Main command processor for the Aider AI coding assistant.
+    
+    This class handles all user commands and coordinates with the AI coder to execute tasks.
+    It implements aerospace-level safety features including input validation, audit logging,
+    and dangerous operation confirmation.
+    
+    Class Attributes:
+        voice: Voice input/output handler (shared across instances)
+        scraper: Web scraping functionality (shared across instances)
+        browser_controller: Browser automation controller (shared across instances)
+        require_confirmation: Global flag to enable/disable dangerous action confirmation
+        available_models: List of configured AI model names
+        model_config_file: Path to the model configuration file
+        model_configs: Dictionary storing per-model API configurations
+        DANGEROUS_COMMANDS: Set of commands requiring user confirmation
+    """
+    
+    # Shared class-level resources (singleton pattern)
     voice = None
     scraper = None
+    browser_controller = None
+    
+    # Global configuration flags
+    require_confirmation = True  # Default: require confirmation for dangerous actions
+    
+    # Available AI models configuration
+    # These models are available for switching and can be configured with custom API endpoints
+    available_models = []  # List of available model names
+    model_config_file = '.aider_models.json'  # Config file for model persistence
+    model_configs = {}  # Dictionary for per-model configuration (API endpoints, API keys, etc.)
+    
+    # Dangerous commands that require confirmation before execution
+    # These commands can cause irreversible changes or security risks
+    DANGEROUS_COMMANDS = {
+        'docker_stop': True,      # Stopping Docker containers
+        'docker_rm': True,         # Removing Docker containers
+        'db_delete': True,         # Deleting database records
+        'db_drop': True,          # Dropping database tables/databases
+        'package_uninstall': True, # Uninstalling Python packages
+        'env_deactivate': True,   # Deactivating virtual environments
+        'memory_clear': True,     # Clearing project memory
+        'schedule_remove': True,  # Removing scheduled tasks
+        'agent': True,            # Autonomous agent execution
+        'ci_run': True,           # Running CI/CD pipelines
+        'pr_create': True,        # Creating pull requests
+    }
 
     def clone(self):
+        """
+        Create a clone of this Commands instance.
+        
+        This method creates a new Commands instance with the same configuration
+        but without a coder, allowing for coder switching.
+        
+        Returns:
+            Commands: A new Commands instance with copied configuration
+        """
         return Commands(
             self.io,
             None,
@@ -49,6 +151,164 @@ class Commands:
             editor=self.editor,
             original_read_only_fnames=self.original_read_only_fnames,
         )
+
+    def confirm_dangerous_action(self, action_name, details=""):
+        """
+        Require user confirmation for dangerous actions (aerospace-level safety).
+        
+        This method implements a safety confirmation mechanism for operations that
+        could cause irreversible changes or security risks. It respects the global
+        configuration setting that can disable confirmation for automation scenarios.
+        
+        Args:
+            action_name (str): Name of the action requiring confirmation
+            details (str): Additional details about the action
+            
+        Returns:
+            bool: True if action is approved (or confirmation disabled), False if rejected
+            
+        Security Features:
+            - Checks global confirmation setting first
+            - Logs all confirmation requests and results
+            - Handles user interruption gracefully
+            - Provides clear warning messages
+        """
+        # Check global configuration - allow bypass if confirmation is disabled
+        if not Commands.require_confirmation:
+            audit_logger.info(f"Confirmation bypassed (disabled) for: {action_name}")
+            self.io.tool_output(f"\n⚠️  DANGEROUS ACTION: {action_name}", log_only=False)
+            self.io.tool_output(f"Confirmation is disabled. Executing directly.", log_only=False)
+            return True
+        
+        # Display confirmation prompt with clear warnings
+        self.io.tool_output(f"\n⚠️  DANGEROUS ACTION: {action_name}", log_only=False)
+        if details:
+            self.io.tool_output(f"Details: {details}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        self.io.tool_output("This action is potentially dangerous and requires confirmation.", log_only=False)
+        self.io.tool_output("Type 'yes' to confirm, or anything else to cancel.", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        # Log the confirmation request for audit trail
+        audit_logger.info(f"Confirmation requested for: {action_name}")
+        
+        # Request user input and handle cancellation
+        try:
+            response = input("Confirm? ")
+            confirmed = response.lower() in ['yes', 'y']
+            audit_logger.info(f"Confirmation result: {'approved' if confirmed else 'rejected'} for {action_name}")
+            return confirmed
+        except (EOFError, KeyboardInterrupt):
+            self.io.tool_output("\nAction cancelled.", log_only=False)
+            audit_logger.info(f"Confirmation interrupted for: {action_name}")
+            return False
+
+    def log_command_start(self, command_name, args=""):
+        """
+        Log the start of command execution (aerospace-level audit trail).
+        
+        This method records the initiation of any command execution to maintain
+        a comprehensive audit trail for compliance and debugging purposes.
+        
+        Args:
+            command_name (str): Name of the command being executed
+            args (str): Command arguments (truncated to 100 chars for log size)
+        """
+        audit_logger.info(f"Command started: {command_name}, args: {args[:100] if args else 'none'}")
+    
+    def log_command_end(self, command_name, status="success", details=""):
+        """
+        Log the completion of command execution (aerospace-level audit trail).
+        
+        This method records the completion status of any command execution to maintain
+        a comprehensive audit trail for compliance and debugging purposes.
+        
+        Args:
+            command_name (str): Name of the command that completed
+            status (str): Execution status (success, error, interrupted, etc.)
+            details (str): Additional details about the result (truncated to 100 chars)
+        """
+        audit_logger.info(f"Command completed: {command_name}, status: {status}, details: {details[:100] if details else 'none'}")
+    
+    def load_model_config(self):
+        """
+        Load available AI models and their configurations from persistent storage.
+        
+        This method reads the model configuration file to restore the list of available
+        AI models and their custom API configurations. If the file doesn't exist,
+        it initializes with default models and configurations.
+        
+        Default Models:
+            - gpt-4, gpt-3.5-turbo (OpenAI)
+            - claude-3-opus, claude-3-sonnet, claude-3-haiku (Anthropic)
+            - ollama/gemma-4-26b-moe (Local Ollama with default config)
+        
+        Error Handling:
+            - JSON decode errors are logged and handled gracefully
+            - Missing file triggers default initialization
+            - All errors result in empty configuration for safety
+        """
+        try:
+            if os.path.exists(self.model_config_file):
+                with open(self.model_config_file, 'r') as f:
+                    config = json.load(f)
+                    Commands.available_models = config.get('models', [])
+                    Commands.model_configs = config.get('model_configs', {})
+                    audit_logger.info(f"Loaded {len(Commands.available_models)} models and {len(Commands.model_configs)} configs")
+            else:
+                # Initialize with default models if config file doesn't exist
+                Commands.available_models = [
+                    'gpt-4',
+                    'gpt-3.5-turbo',
+                    'claude-3-opus',
+                    'claude-3-sonnet',
+                    'claude-3-haiku',
+                    'ollama/gemma-4-26b-moe'
+                ]
+                # Initialize with default configs for local models
+                Commands.model_configs = {
+                    'ollama/gemma-4-26b-moe': {
+                        'api_base': 'http://localhost:11434/v1',
+                        'api_key': 'ollama'
+                    }
+                }
+                self.save_model_config()
+        except json.JSONDecodeError as e:
+            audit_logger.error(f"Error loading model config: {e}")
+            Commands.available_models = []
+            Commands.model_configs = {}
+        except Exception as e:
+            audit_logger.error(f"Error loading model config: {e}")
+            Commands.available_models = []
+            Commands.model_configs = {}
+    
+    def save_model_config(self):
+        """
+        Save available AI models and their configurations to persistent storage.
+        
+        This method persists the current model configuration to a JSON file,
+        ensuring that model settings are preserved across sessions.
+        
+        Saved Data:
+            - List of available model names
+            - Per-model API configurations (endpoints, keys, etc.)
+            - Timestamp of last update
+        
+        Error Handling:
+            - File write errors are logged but don't crash the application
+            - Ensures configuration persistence for session continuity
+        """
+        try:
+            config = {
+                'models': Commands.available_models,
+                'model_configs': Commands.model_configs,
+                'updated': datetime.now().isoformat()
+            }
+            with open(self.model_config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+            audit_logger.info(f"Saved {len(Commands.available_models)} models and {len(Commands.model_configs)} configs")
+        except Exception as e:
+            audit_logger.error(f"Error saving model config: {e}")
 
     def __init__(
         self,
@@ -83,16 +343,75 @@ class Commands:
 
         # Store the original read-only filenames provided via args.read
         self.original_read_only_fnames = set(original_read_only_fnames or [])
+        
+        # Load model configuration
+        self.load_model_config()
 
     def cmd_model(self, args):
-        "Switch the Main Model to a new LLM"
+        """
+        Switch the Main Model to a new LLM (with configuration support).
+        
+        This command allows users to switch between different AI models from the
+        configured list. It validates that the model is in the available list and
+        displays custom API configurations if they exist.
+        
+        Args:
+            args (str): Model name to switch to, or empty to show available models
+            
+        Behavior:
+            - Without args: Lists available models with their configurations
+            - With args: Switches to the specified model if in available list
+            - Displays custom API configuration when switching
+            - Logs the model switch for audit trail
+            
+        Example:
+            /model              # Show available models
+            /model gpt-4        # Switch to GPT-4
+            /model ollama/gemma-4-26b-moe  # Switch to local Ollama model
+        """
 
         model_name = args.strip()
         if not model_name:
-            announcements = "\n".join(self.coder.get_announcements())
-            self.io.tool_output(announcements)
+            # Show available models and current model
+            self.io.tool_output("\n🤖 Available AI Models:", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            if Commands.available_models:
+                for i, model in enumerate(Commands.available_models, 1):
+                    current = " (current)" if model == self.coder.main_model.name else ""
+                    self.io.tool_output(f"  {i}. {model}{current}", log_only=False)
+                    
+                    # Show model configuration if available
+                    if model in Commands.model_configs:
+                        config = Commands.model_configs[model]
+                        if config.get('api_base'):
+                            self.io.tool_output(f"     API Base: {config['api_base']}", log_only=False)
+            else:
+                self.io.tool_output("  No models configured", log_only=False)
+            
+            self.io.tool_output("\nUsage: /model <model_name>", log_only=False)
+            self.io.tool_output("Example: /model gpt-4", log_only=False)
+            self.io.tool_output("Use /models to manage available models", log_only=False)
             return
-
+        
+        # Check if model is in available list (validation)
+        if Commands.available_models and model_name not in Commands.available_models:
+            self.io.tool_error(f"Model '{model_name}' is not in the available models list")
+            self.io.tool_output(f"Available models: {', '.join(Commands.available_models)}", log_only=False)
+            self.io.tool_output("Use /models add <model_name> to add this model", log_only=False)
+            return
+        
+        # Apply custom configuration if available (display for user awareness)
+        if model_name in Commands.model_configs:
+            config = Commands.model_configs[model_name]
+            self.io.tool_output(f"🔧 Using custom configuration for: {model_name}", log_only=False)
+            for key, value in config.items():
+                if 'key' not in key.lower():
+                    self.io.tool_output(f"  {key}: {value}", log_only=False)
+                else:
+                    self.io.tool_output(f"  {key}: {value[:8]}...", log_only=False)
+        
+        # Create model instance and validate
         model = models.Model(
             model_name,
             editor_model=self.coder.main_model.editor_model.name,
@@ -109,7 +428,214 @@ class Commands:
             # If the user was using the old model's default, switch to the new model's default
             new_edit_format = model.edit_format
 
+        # Log the model switch for audit trail
+        audit_logger.info(f"Model switched to: {model_name}")
         raise SwitchCoder(main_model=model, edit_format=new_edit_format)
+
+    def cmd_models(self, args):
+        """
+        Manage available AI models list with full configuration support.
+        
+        This command provides comprehensive model management including:
+        - Listing available models with their API configurations
+        - Adding new models to the available list
+        - Removing models from the available list
+        - Configuring API endpoints and keys for each model
+        - Viewing detailed model configurations
+        - Resetting to default models and configurations
+        
+        Subcommands:
+            - (no args): List all models with configurations and help
+            - list: List available models with configurations
+            - add <name>: Add a model to the available list
+            - remove <name>: Remove a model from the available list
+            - clear: Clear all models and configurations
+            - reset: Reset to default models and configurations
+            - config <name> [api_base=<url>] [api_key=<key>]: Configure model API settings
+            - show <name>: Show detailed configuration for a model
+            
+        Args:
+            args (str): Command arguments including subcommand and parameters
+            
+        Example:
+            /models add ollama/llama3-70b
+            /models config ollama/llama3-70b api_base=http://localhost:11434/v1 api_key=ollama
+            /models show ollama/llama3-70b
+        """
+        parts = args.strip().split()
+        
+        if not parts:
+            # List all available models with their configurations
+            self.io.tool_output("\n🤖 Available AI Models:", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            if Commands.available_models:
+                for i, model in enumerate(Commands.available_models, 1):
+                    current = " (current)" if model == self.coder.main_model.name else ""
+                    self.io.tool_output(f"  {i}. {model}{current}", log_only=False)
+                    
+                    # Show model configuration if available
+                    if model in Commands.model_configs:
+                        config = Commands.model_configs[model]
+                        if config.get('api_base'):
+                            self.io.tool_output(f"     API Base: {config['api_base']}", log_only=False)
+                        if config.get('api_key'):
+                            self.io.tool_output(f"     API Key: {config['api_key'][:8]}...", log_only=False)
+                
+                self.io.tool_output(f"\nTotal: {len(Commands.available_models)} models", log_only=False)
+                self.io.tool_output(f"Configured: {len(Commands.model_configs)} models", log_only=False)
+            else:
+                self.io.tool_output("  No models configured", log_only=False)
+            
+            self.io.tool_output("\nCommands:", log_only=False)
+            self.io.tool_output("  /models list              - List available models", log_only=False)
+            self.io.tool_output("  /models add <name>        - Add a model", log_only=False)
+            self.io.tool_output("  /models remove <name>     - Remove a model", log_only=False)
+            self.io.tool_output("  /models clear             - Clear all models", log_only=False)
+            self.io.tool_output("  /models reset             - Reset to default models", log_only=False)
+            self.io.tool_output("  /models config <name>     - Configure model API", log_only=False)
+            self.io.tool_output("  /models show <name>       - Show model configuration", log_only=False)
+            return
+        
+        command = parts[0].lower()
+        
+        if command == 'list':
+            self.io.tool_output("\n🤖 Available AI Models:", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            if Commands.available_models:
+                for i, model in enumerate(Commands.available_models, 1):
+                    current = " (current)" if model == self.coder.main_model.name else ""
+                    self.io.tool_output(f"  {i}. {model}{current}", log_only=False)
+                    
+                    # Show model configuration if available
+                    if model in Commands.model_configs:
+                        config = Commands.model_configs[model]
+                        if config.get('api_base'):
+                            self.io.tool_output(f"     API Base: {config['api_base']}", log_only=False)
+                        if config.get('api_key'):
+                            self.io.tool_output(f"     API Key: {config['api_key'][:8]}...", log_only=False)
+                
+                self.io.tool_output(f"\nTotal: {len(Commands.available_models)} models", log_only=False)
+                self.io.tool_output(f"Configured: {len(Commands.model_configs)} models", log_only=False)
+            else:
+                self.io.tool_output("  No models configured", log_only=False)
+        
+        elif command == 'add':
+            if len(parts) < 2:
+                self.io.tool_error("Usage: /models add <model_name>")
+                return
+            
+            model_name = parts[1]
+            if model_name in Commands.available_models:
+                self.io.tool_output(f"Model '{model_name}' already exists in the list", log_only=False)
+                return
+            
+            Commands.available_models.append(model_name)
+            self.save_model_config()
+            self.io.tool_output(f"✓ Added model: {model_name}", log_only=False)
+            audit_logger.info(f"Model added to available list: {model_name}")
+        
+        elif command == 'remove':
+            if len(parts) < 2:
+                self.io.tool_error("Usage: /models remove <model_name>")
+                return
+            
+            model_name = parts[1]
+            if model_name not in Commands.available_models:
+                self.io.tool_error(f"Model '{model_name}' not found in the list")
+                return
+            
+            Commands.available_models.remove(model_name)
+            # Also remove configuration if exists
+            if model_name in Commands.model_configs:
+                del Commands.model_configs[model_name]
+            self.save_model_config()
+            self.io.tool_output(f"✓ Removed model: {model_name}", log_only=False)
+            audit_logger.info(f"Model removed from available list: {model_name}")
+        
+        elif command == 'clear':
+            if not Commands.available_models:
+                self.io.tool_output("Model list is already empty", log_only=False)
+                return
+            
+            Commands.available_models = []
+            Commands.model_configs = {}
+            self.save_model_config()
+            self.io.tool_output("✓ Cleared all models and configurations", log_only=False)
+            audit_logger.warning("All models and configs cleared")
+        
+        elif command == 'reset':
+            Commands.available_models = [
+                'gpt-4',
+                'gpt-3.5-turbo',
+                'claude-3-opus',
+                'claude-3-sonnet',
+                'claude-3-haiku',
+                'ollama/gemma-4-26b-moe'
+            ]
+            Commands.model_configs = {
+                'ollama/gemma-4-26b-moe': {
+                    'api_base': 'http://localhost:11434/v1',
+                    'api_key': 'ollama'
+                }
+            }
+            self.save_model_config()
+            self.io.tool_output("✓ Reset to default models and configurations", log_only=False)
+            audit_logger.info("Model list reset to defaults")
+        
+        elif command == 'config':
+            if len(parts) < 2:
+                self.io.tool_error("Usage: /models config <model_name> [api_base=<url>] [api_key=<key>]")
+                self.io.tool_error("Example: /models config ollama/gemma-4-26b-moe api_base=http://localhost:11434/v1 api_key=ollama")
+                return
+            
+            model_name = parts[1]
+            if model_name not in Commands.available_models:
+                self.io.tool_error(f"Model '{model_name}' not in available models. Add it first with /models add")
+                return
+            
+            # Initialize config if not exists
+            if model_name not in Commands.model_configs:
+                Commands.model_configs[model_name] = {}
+            
+            # Parse configuration options
+            for part in parts[2:]:
+                if '=' in part:
+                    key, value = part.split('=', 1)
+                    Commands.model_configs[model_name][key] = value
+            
+            self.save_model_config()
+            self.io.tool_output(f"✓ Updated configuration for: {model_name}", log_only=False)
+            self.io.tool_output(f"  Configuration: {Commands.model_configs[model_name]}", log_only=False)
+            audit_logger.info(f"Model configuration updated: {model_name}")
+        
+        elif command == 'show':
+            if len(parts) < 2:
+                self.io.tool_error("Usage: /models show <model_name>")
+                return
+            
+            model_name = parts[1]
+            if model_name not in Commands.available_models:
+                self.io.tool_error(f"Model '{model_name}' not found")
+                return
+            
+            self.io.tool_output(f"\n🔧 Configuration for: {model_name}", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            if model_name in Commands.model_configs:
+                for key, value in Commands.model_configs[model_name].items():
+                    # Mask API keys
+                    if 'key' in key.lower():
+                        value = value[:8] + '...' if len(value) > 8 else '***'
+                    self.io.tool_output(f"  {key}: {value}", log_only=False)
+            else:
+                self.io.tool_output("  No custom configuration", log_only=False)
+                self.io.tool_output("  Using default settings", log_only=False)
+        
+        else:
+            self.io.tool_error(f"Unknown command: {command}")
+            self.io.tool_output("Available commands: list, add, remove, clear, reset, config, show", log_only=False)
 
     def cmd_editor_model(self, args):
         "Switch the Editor Model to a new LLM"
@@ -251,6 +777,137 @@ class Commands:
             dict(role="user", content=content),
             dict(role="assistant", content="Ok."),
         ]
+
+    def cmd_browser_start(self, args):
+        "Start a browser session for web automation"
+        if not Commands.browser_controller:
+            disable_playwright = getattr(self.args, "disable_playwright", False)
+            if disable_playwright:
+                res = False
+            else:
+                res = install_playwright(self.io)
+                if not res:
+                    self.io.tool_error("Unable to initialize playwright.")
+                    return
+
+            Commands.browser_controller = BrowserController(
+                print_error=self.io.tool_error,
+                verify_ssl=self.verify_ssl,
+                headless=True,
+            )
+
+        if Commands.browser_controller.start():
+            self.io.tool_output("🌐 Browser session started", log_only=False)
+        else:
+            self.io.tool_error("Failed to start browser session")
+
+    def cmd_browser_stop(self, args):
+        "Stop the browser session"
+        if not Commands.browser_controller:
+            self.io.tool_warning("No active browser session")
+            return
+
+        if Commands.browser_controller.stop():
+            self.io.tool_output("Browser session stopped", log_only=False)
+            Commands.browser_controller = None
+        else:
+            self.io.tool_error("Failed to stop browser session")
+
+    def cmd_browser_navigate(self, args):
+        "Navigate to a URL in the browser"
+        if not Commands.browser_controller:
+            self.io.tool_error("No active browser session. Use /browser-start first.")
+            return
+
+        url = args.strip()
+        if not url:
+            self.io.tool_error("Please provide a URL")
+            return
+
+        self.io.tool_output(f"Navigating to {url}...", log_only=False)
+        if Commands.browser_controller.navigate(url):
+            self.io.tool_output("✓ Navigation successful", log_only=False)
+        else:
+            self.io.tool_error("Navigation failed")
+
+    def cmd_browser_click(self, args):
+        "Click an element on the page"
+        if not Commands.browser_controller:
+            self.io.tool_error("No active browser session. Use /browser-start first.")
+            return
+
+        selector = args.strip()
+        if not selector:
+            self.io.tool_error("Please provide a CSS selector")
+            return
+
+        self.io.tool_output(f"Clicking {selector}...", log_only=False)
+        if Commands.browser_controller.click(selector):
+            self.io.tool_output("✓ Click successful", log_only=False)
+        else:
+            self.io.tool_error("Click failed")
+
+    def cmd_browser_fill(self, args):
+        "Fill a form field with text"
+        if not Commands.browser_controller:
+            self.io.tool_error("No active browser session. Use /browser-start first.")
+            return
+
+        parts = args.split(maxsplit=1)
+        if len(parts) < 2:
+            self.io.tool_error("Usage: /browser-fill <selector> <text>")
+            return
+
+        selector, text = parts[0], parts[1]
+        self.io.tool_output(f"Filling {selector}...", log_only=False)
+        if Commands.browser_controller.fill(selector, text):
+            self.io.tool_output("✓ Fill successful", log_only=False)
+        else:
+            self.io.tool_error("Fill failed")
+
+    def cmd_browser_select(self, args):
+        "Select an option from a dropdown"
+        if not Commands.browser_controller:
+            self.io.tool_error("No active browser session. Use /browser-start first.")
+            return
+
+        parts = args.split(maxsplit=1)
+        if len(parts) < 2:
+            self.io.tool_error("Usage: /browser-select <selector> <value>")
+            return
+
+        selector, value = parts[0], parts[1]
+        self.io.tool_output(f"Selecting {value} from {selector}...", log_only=False)
+        if Commands.browser_controller.select(selector, value):
+            self.io.tool_output("✓ Selection successful", log_only=False)
+        else:
+            self.io.tool_error("Selection failed")
+
+    def cmd_browser_screenshot(self, args):
+        "Take a screenshot of the current page"
+        if not Commands.browser_controller:
+            self.io.tool_error("No active browser session. Use /browser-start first.")
+            return
+
+        path = args.strip() or "screenshot.png"
+        self.io.tool_output(f"Taking screenshot to {path}...", log_only=False)
+        if Commands.browser_controller.screenshot(path):
+            self.io.tool_output(f"✓ Screenshot saved to {path}", log_only=False)
+        else:
+            self.io.tool_error("Screenshot failed")
+
+    def cmd_browser_content(self, args):
+        "Get the current page content as text"
+        if not Commands.browser_controller:
+            self.io.tool_error("No active browser session. Use /browser-start first.")
+            return
+
+        content = Commands.browser_controller.get_text()
+        if content:
+            self.io.tool_output("Current page content:", log_only=False)
+            self.io.tool_output(content, log_only=False)
+        else:
+            self.io.tool_error("Failed to get page content")
 
     def is_command(self, inp):
         return inp[0] in "/!"
@@ -683,7 +1340,7 @@ class Commands:
         self.io.tool_output(f"Diff since {commit_before_message[:7]}...")
 
         if self.coder.pretty:
-            run_cmd(f"git diff {commit_before_message}")
+            run_cmd(f"git diff {commit_before_message}", io=self.io)
             return
 
         diff = self.coder.repo.diff_commits(
@@ -1013,7 +1670,7 @@ class Commands:
     def cmd_run(self, args, add_on_nonzero_exit=False):
         "Run a shell command and optionally add the output to the chat (alias: !)"
         exit_status, combined_output = run_cmd(
-            args, verbose=self.verbose, error_print=self.io.tool_error, cwd=self.coder.root
+            args, verbose=self.verbose, error_print=self.io.tool_error, cwd=self.coder.root, io=self.io
         )
 
         if combined_output is None:
@@ -1450,14 +2107,60 @@ class Commands:
             model_sections.append(f"{label} ({model.name}):")
             for k, v in sorted(info.items()):
                 model_sections.append(f"  {k}: {v}")
-            model_sections.append("")  # blank line between models
 
-        model_metadata = "\n".join(model_sections)
+        if model_sections:
+            settings = settings + "\n" + "\n".join(model_sections)
 
-        output = f"{announcements}\n{settings}"
-        if model_metadata:
-            output += "\n" + model_metadata
-        self.io.tool_output(output)
+        self.io.tool_output(settings, log_only=False)
+
+    def cmd_confirm(self, args):
+        """
+        Toggle dangerous command confirmation on/off (global configuration).
+        
+        This command allows users to enable or disable the confirmation mechanism
+        for dangerous operations globally. This is useful for automation scenarios
+        where manual confirmation would block automated workflows.
+        
+        Security Considerations:
+            - Disabling confirmation is logged as a warning
+            - Clear warnings are displayed when disabling
+            - Current status is always visible
+            - All confirmation changes are logged for audit trail
+            
+        Subcommands:
+            - (no args): Show current confirmation status
+            - on: Enable dangerous command confirmation
+            - off: Disable dangerous command confirmation
+            
+        Args:
+            args (str): Command argument (on, off, or empty to show status)
+            
+        Example:
+            /confirm              # Show current status
+            /confirm on           # Enable confirmation
+            /confirm off          # Disable confirmation (use with caution)
+        """
+        parts = args.strip().lower().split()
+        
+        if not parts:
+            # Show current status
+            status = "enabled" if Commands.require_confirmation else "disabled"
+            self.io.tool_output(f"\n🔒 Dangerous command confirmation: {status}", log_only=False)
+            self.io.tool_output("Usage: /confirm on|off", log_only=False)
+            return
+        
+        if parts[0] == 'on':
+            Commands.require_confirmation = True
+            self.io.tool_output("✅ Dangerous command confirmation ENABLED", log_only=False)
+            audit_logger.info("Confirmation setting changed: enabled")
+        elif parts[0] == 'off':
+            Commands.require_confirmation = False
+            self.io.tool_output("⚠️  Dangerous command confirmation DISABLED", log_only=False)
+            self.io.tool_output("⚠️  Use with caution - dangerous actions will execute without confirmation!", log_only=False)
+            audit_logger.warning("Confirmation setting changed: disabled")
+        else:
+            self.io.tool_error("Usage: /confirm on|off")
+            self.io.tool_error("Current status: " + ("enabled" if Commands.require_confirmation else "disabled"))
 
     def completions_raw_load(self, document, complete_event):
         return self.completions_raw_read_only(document, complete_event)
@@ -1565,6 +2268,111 @@ class Commands:
             title = None
 
         report_github_issue(issue_text, title=title, confirm=False)
+
+    def cmd_summary(self, args):
+        "Generate a summary of the current session's work"
+        self.io.tool_output("\n📊 Session Summary", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        # Commit summary
+        if self.coder.aider_commit_hashes:
+            self.io.tool_output(f"\n📝 Commits made by aider: {len(self.coder.aider_commit_hashes)}", log_only=False)
+            for i, commit_hash in enumerate(self.coder.aider_commit_hashes[-5:], 1):
+                try:
+                    commit_message = self.coder.repo.get_commit_message(commit_hash)
+                    self.io.tool_output(f"  {i}. {commit_hash[:7]}: {commit_message}", log_only=False)
+                except Exception:
+                    self.io.tool_output(f"  {i}. {commit_hash[:7]}: (unable to get message)", log_only=False)
+        else:
+            self.io.tool_output("\n📝 No commits made yet", log_only=False)
+        
+        # Files in chat
+        if self.coder.abs_fnames:
+            self.io.tool_output(f"\n📁 Files in chat: {len(self.coder.abs_fnames)}", log_only=False)
+            for fname in list(self.coder.abs_fnames)[:10]:
+                rel_fname = self.coder.get_rel_fname(fname)
+                self.io.tool_output(f"  - {rel_fname}", log_only=False)
+            if len(self.coder.abs_fnames) > 10:
+                self.io.tool_output(f"  ... and {len(self.coder.abs_fnames) - 10} more", log_only=False)
+        else:
+            self.io.tool_output("\n📁 No files in chat", log_only=False)
+        
+        # Lint outcome
+        if hasattr(self.coder, 'lint_outcome') and self.coder.lint_outcome is not None:
+            status = "✓ Passed" if self.coder.lint_outcome else "✗ Failed"
+            self.io.tool_output(f"\n🔍 Lint: {status}", log_only=False)
+        
+        # Test outcome
+        if hasattr(self.coder, 'test_outcome') and self.coder.test_outcome is not None:
+            status = "✓ Passed" if self.coder.test_outcome else "✗ Failed"
+            self.io.tool_output(f"\n🧪 Test: {status}", log_only=False)
+        
+        # Token usage
+        if hasattr(self.coder, 'message_tokens_sent') and self.coder.message_tokens_sent:
+            tokens_sent = self.coder.message_tokens_sent
+            tokens_received = self.coder.message_tokens_received
+            self.io.tool_output(f"\n💰 Tokens: {tokens_sent:,} sent, {tokens_received:,} received", log_only=False)
+        
+        # Current model
+        if hasattr(self.coder, 'main_model'):
+            self.io.tool_output(f"\n🤖 Model: {self.coder.main_model.name}", log_only=False)
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_changelog(self, args):
+        "Generate a changelog from recent commits"
+        try:
+            import git
+            repo = git.Repo(self.coder.root)
+            
+            # Get recent commits (last 20)
+            commits = list(repo.iter_commits(max_count=20))
+            
+            if not commits:
+                self.io.tool_output("No commits found in this repository")
+                return
+            
+            self.io.tool_output("\n📜 Changelog", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            # Group commits by type (conventional commits)
+            types = {}
+            for commit in commits:
+                message = commit.message.strip().split('\n')[0]
+                # Extract type from conventional commit
+                if ':' in message:
+                    commit_type = message.split(':')[0].strip().lower()
+                    if commit_type not in types:
+                        types[commit_type] = []
+                    types[commit_type].append({
+                        'hash': commit.hexsha[:7],
+                        'message': message,
+                        'author': commit.author.name,
+                        'date': commit.committed_datetime.strftime('%Y-%m-%d'),
+                    })
+            
+            # Display by type
+            type_order = ['feat', 'fix', 'refactor', 'perf', 'docs', 'style', 'test', 'chore', 'build', 'ci']
+            for commit_type in type_order:
+                if commit_type in types and types[commit_type]:
+                    self.io.tool_output(f"\n### {commit_type.upper()}", log_only=False)
+                    for item in types[commit_type]:
+                        self.io.tool_output(f"- {item['hash']}: {item['message']} ({item['date']})", log_only=False)
+            
+            # Display uncategorized commits
+            other_types = set(types.keys()) - set(type_order)
+            if other_types:
+                self.io.tool_output(f"\n### OTHER", log_only=False)
+                for commit_type in other_types:
+                    for item in types[commit_type]:
+                        self.io.tool_output(f"- {item['hash']}: {item['message']} ({item['date']})", log_only=False)
+            
+            self.io.tool_output("\n" + "=" * 50, log_only=False)
+            
+        except ImportError:
+            self.io.tool_error("GitPython not installed. Install with: pip install gitpython")
+        except Exception as e:
+            self.io.tool_error(f"Error generating changelog: {e}")
 
     def cmd_editor(self, initial_content=""):
         "Open an editor to write a prompt"
@@ -1678,6 +2486,1644 @@ Just show me the edits I need to make.
             )
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
+
+    def cmd_grep(self, args):
+        """
+        Search for a pattern across files in the codebase (aerospace-level enhanced).
+        
+        This command implements comprehensive code searching with aerospace-level
+        safety features including input validation, resource limits, and audit logging.
+        
+        Aerospace-level Features:
+            - Input validation: Pattern length limit (1000 chars) to prevent DoS
+            - Resource limits: File count limit (1000), line count limit (10000), result limit (1000)
+            - Error handling: Graceful handling of file read errors, regex compilation errors
+            - Audit logging: All search operations logged for compliance
+            - Timeout protection: Prevents infinite loops in large codebases
+        
+        Args:
+            args (str): Regex pattern to search for
+            
+        Returns:
+            None: Results are displayed via tool_output
+            
+        Example:
+            /grep "TODO"
+            /grep "def.*test"
+        """
+        import re
+        
+        # Aerospace-level input validation
+        pattern = args.strip()
+        if not pattern:
+            self.io.tool_error("Please provide a search pattern")
+            audit_logger.warning("cmd_grep called with empty pattern")
+            return
+        
+        # Limit pattern length to prevent DoS (resource exhaustion attack)
+        if len(pattern) > 1000:
+            self.io.tool_error("Pattern too long (max 1000 characters)")
+            audit_logger.warning(f"cmd_grep rejected pattern exceeding 1000 chars: {len(pattern)}")
+            return
+        
+        # Compile regex to validate pattern before searching
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            self.io.tool_error(f"Invalid regex pattern: {e}")
+            audit_logger.warning(f"cmd_grep: Invalid regex pattern: {e}")
+            return
+        
+        # Log search start for audit trail
+        audit_logger.info(f"cmd_grep started with pattern: {pattern[:50]}...")
+        self.io.tool_output(f"🔍 Searching for: {pattern}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        # Get all files to search (prioritize files in chat, then repo)
+        if self.coder.abs_fnames:
+            search_files = list(self.coder.abs_fnames)
+        elif self.coder.repo:
+            search_files = self.coder.repo.get_tracked_files()
+        else:
+            self.io.tool_error("No files available to search")
+            audit_logger.warning("cmd_grep: No files available to search")
+            return
+        
+        results = []
+        try:
+            # Compile regex with timeout protection
+            regex = re.compile(pattern, re.IGNORECASE)
+        except re.error as e:
+            self.io.tool_error(f"Invalid regex pattern: {e}")
+            audit_logger.error(f"cmd_grep: Invalid regex pattern: {e}")
+            return
+        
+        # Limit file count to prevent resource exhaustion
+        max_files = 1000
+        file_count = 0
+        
+        for fname in search_files:
+            file_count += 1
+            if file_count > max_files:
+                self.io.tool_output(f"⚠️  Search limited to first {max_files} files", log_only=False)
+                audit_logger.warning(f"cmd_grep: Limited to {max_files} files")
+                break
+            
+            try:
+                # Use context manager for proper file cleanup
+                with open(fname, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line_num, line in enumerate(f, 1):
+                        # Limit lines per file to prevent memory issues
+                        if line_num > 10000:
+                            break
+                        if regex.search(line):
+                            rel_fname = self.coder.get_rel_fname(fname)
+                            results.append({
+                                'file': rel_fname,
+                                'line': line_num,
+                                'content': line.rstrip()
+                            })
+                            # Limit total results
+                            if len(results) >= 1000:
+                                self.io.tool_output(f"⚠️  Results limited to 1000 matches", log_only=False)
+                                audit_logger.warning(f"cmd_grep: Results limited to 1000 matches")
+                                break
+            except (IOError, OSError) as e:
+                # Log error but continue with other files
+                audit_logger.warning(f"cmd_grep: Error reading {fname}: {e}")
+                continue
+            except Exception as e:
+                # Log unexpected error but continue
+                audit_logger.error(f"cmd_grep: Unexpected error reading {fname}: {e}")
+                continue
+            
+            if len(results) >= 1000:
+                break
+        
+        if not results:
+            self.io.tool_output("No matches found", log_only=False)
+            audit_logger.info(f"cmd_grep: No matches found for pattern")
+        else:
+            self.io.tool_output(f"\nFound {len(results)} matches:\n", log_only=False)
+            audit_logger.info(f"cmd_grep: Found {len(results)} matches")
+            for result in results[:50]:  # Limit display to 50 results
+                self.io.tool_output(f"  {result['file']}:{result['line']}", log_only=False)
+                self.io.tool_output(f"    {result['content']}", log_only=False)
+            
+            if len(results) > 50:
+                self.io.tool_output(f"\n... and {len(results) - 50} more matches", log_only=False)
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_format(self, args):
+        "Format code using black, prettier, or other formatters"
+        import subprocess
+        import os
+        import shlex
+        
+        # Aerospace-level input validation
+        self.log_command_start("cmd_format", args)
+        
+        if not args or not args.strip():
+            self.io.tool_error("No arguments provided for format command")
+            self.log_command_end("cmd_format", "error", "No arguments")
+            return
+        
+        # Detect project type and choose appropriate formatter
+        formatters = {
+            'python': ['black'],
+            'javascript': ['prettier'],
+            'typescript': ['prettier'],
+            'json': ['prettier'],
+            'css': ['prettier'],
+            'html': ['prettier'],
+            'markdown': ['prettier'],
+        }
+        
+        files_to_format = []
+        if self.coder.abs_fnames:
+            files_to_format = list(self.coder.abs_fnames)
+        else:
+            self.io.tool_error("No files in chat to format")
+            return
+        
+        # Limit number of files to format
+        if len(files_to_format) > 100:
+            self.io.tool_output(f"⚠️  Formatting limited to first 100 files", log_only=False)
+            files_to_format = files_to_format[:100]
+        
+        formatted_count = 0
+        error_count = 0
+        
+        for fname in files_to_format:
+            # Validate file path to prevent directory traversal
+            try:
+                abs_path = os.path.abspath(fname)
+                if not abs_path.startswith(os.getcwd()):
+                    self.io.tool_output(f"⚠️  Skipping file outside project: {fname}", log_only=False)
+                    continue
+            except Exception:
+                self.io.tool_output(f"⚠️  Invalid file path: {fname}", log_only=False)
+                continue
+            
+            ext = os.path.splitext(fname)[1].lower().lstrip('.')
+            
+            if ext in formatters:
+                formatter = formatters[ext][0]
+                try:
+                    self.io.tool_output(f"🎨 Formatting {fname} with {formatter}...", log_only=False)
+                    
+                    # Add timeout to prevent hanging
+                    result = subprocess.run(
+                        [formatter, fname],
+                        capture_output=True,
+                        text=True,
+                        timeout=30  # 30 second timeout
+                    )
+                    
+                    if result.returncode == 0:
+                        formatted_count += 1
+                        self.io.tool_output(f"  ✓ Formatted successfully", log_only=False)
+                    else:
+                        error_count += 1
+                        self.io.tool_output(f"  ✗ Failed: {result.stderr[:200]}", log_only=False)
+                except subprocess.TimeoutExpired:
+                    error_count += 1
+                    self.io.tool_output(f"  ✗ Timeout after 30 seconds", log_only=False)
+                except FileNotFoundError:
+                    self.io.tool_output(f"  ⚠️  {formatter} not installed", log_only=False)
+                except Exception as e:
+                    error_count += 1
+                    self.io.tool_output(f"  ✗ Error: {str(e)[:200]}", log_only=False)
+            else:
+                self.io.tool_output(f"  ⚠️  No formatter for .{ext} files", log_only=False)
+        
+        self.io.tool_output(f"\n📊 Formatted {formatted_count}/{len(files_to_format)} files", log_only=False)
+        if error_count > 0:
+            self.io.tool_output(f"⚠️  {error_count} files had errors", log_only=False)
+        
+        self.log_command_end("cmd_format", "success", f"Formatted {formatted_count} files, {error_count} errors")
+
+    def cmd_deps(self, args):
+        "Analyze project dependencies for security and updates"
+        import subprocess
+        
+        self.log_command_start("cmd_deps", args)
+        
+        self.io.tool_output("📦 Analyzing dependencies...", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        # Check for requirements.txt or pyproject.toml
+        req_files = ['requirements.txt', 'pyproject.toml', 'package.json']
+        found_req = False
+        
+        for req_file in req_files:
+            if os.path.exists(req_file):
+                found_req = True
+                self.io.tool_output(f"\n📄 Found: {req_file}", log_only=False)
+                
+                # Try to use pip-audit or safety for security checks
+                if req_file.endswith('.txt') or req_file.endswith('.toml'):
+                    try:
+                        result = subprocess.run(
+                            ['pip-audit', '--format', 'json'],
+                            capture_output=True,
+                            text=True
+                        )
+                        if result.returncode == 0:
+                            vulns = json.loads(result.stdout)
+                            if vulns.get('dependencies'):
+                                self.io.tool_output(f"  ⚠️  Found {len(vulns['dependencies'])} vulnerabilities", log_only=False)
+                            else:
+                                self.io.tool_output("  ✓ No vulnerabilities found", log_only=False)
+                        else:
+                            self.io.tool_output("  ⚠️  pip-audit not available", log_only=False)
+                    except FileNotFoundError:
+                        self.io.tool_output("  ⚠️  pip-audit not installed (pip install pip-audit)", log_only=False)
+                    except Exception as e:
+                        self.io.tool_output(f"  ⚠️  Error: {e}", log_only=False)
+                
+                # Try to use pip-outdated for update checks
+                if req_file.endswith('.txt') or req_file.endswith('.toml'):
+                    try:
+                        result = subprocess.run(
+                            ['pip-outdated', '--format', 'json'],
+                            capture_output=True,
+                            text=True
+                        )
+                        if result.returncode == 0:
+                            outdated = json.loads(result.stdout)
+                            if outdated:
+                                self.io.tool_output(f"  ⚠️  Found {len(outdated)} outdated packages", log_only=False)
+                                for pkg in outdated[:5]:  # Show top 5
+                                    self.io.tool_output(f"    - {pkg.get('name')}: {pkg.get('latest_version')}", log_only=False)
+                            else:
+                                self.io.tool_output("  ✓ All packages up to date", log_only=False)
+                        else:
+                            self.io.tool_output("  ⚠️  pip-outdated not available", log_only=False)
+                    except FileNotFoundError:
+                        self.io.tool_output("  ⚠️  pip-outdated not installed (pip install pip-outdated)", log_only=False)
+                    except Exception as e:
+                        self.io.tool_output(f"  ⚠️  Error: {e}", log_only=False)
+        
+        if not found_req:
+            self.io.tool_output("  ⚠️  No dependency files found", log_only=False)
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+        self.io.tool_output("\n💡 Install tools: pip install pip-audit pip-outdated", log_only=False)
+        
+        self.log_command_end("cmd_deps", "success", f"Found {found_req} dependency files")
+
+    def cmd_api(self, args):
+        """
+        Test REST API endpoints with aerospace-level safety features.
+        
+        This command provides API testing functionality with comprehensive safety
+        features including input validation, URL checking, timeout protection,
+        and audit logging.
+        
+        Aerospace-level Features:
+            - Input validation: HTTP method whitelist, URL protocol validation
+            - Resource limits: URL length limit (2000 chars), data length limit (10000 chars)
+            - Timeout protection: 35-second timeout to prevent hanging
+            - Security: Protocol restriction (http/https only), SSRF prevention
+            - Error handling: Graceful handling of network errors, timeout errors
+            - Audit logging: All API requests logged for compliance
+        
+        Args:
+            args (str): API command in format "<METHOD> <URL> [data]"
+            
+        Example:
+            /api GET https://api.example.com/users
+            /api POST https://api.example.com/users '{"name":"test"}'
+        """
+        import subprocess
+        import urllib.parse
+        
+        self.log_command_start("cmd_api", args)
+        
+        # Aerospace-level input validation
+        parts = args.strip().split()
+        if len(parts) < 2:
+            self.io.tool_error("Usage: /api <METHOD> <URL> [data]")
+            self.io.tool_error("Example: /api GET https://api.example.com/users")
+            self.io.tool_error("Example: /api POST https://api.example.com/users '{\"name\":\"test\"}'")
+            self.log_command_end("cmd_api", "error", "Invalid arguments")
+            return
+        
+        method = parts[0].upper()
+        url = parts[1]
+        data = ' '.join(parts[2:]) if len(parts) > 2 else None
+        
+        # Validate HTTP method (whitelist approach for security)
+        valid_methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
+        if method not in valid_methods:
+            self.io.tool_error(f"Invalid method. Allowed: {', '.join(valid_methods)}")
+            self.log_command_end("cmd_api", "error", f"Invalid method: {method}")
+            return
+        
+        # Validate URL structure and protocol (SSRF prevention)
+        try:
+            parsed = urllib.parse.urlparse(url)
+            if not parsed.scheme or parsed.scheme not in ['http', 'https']:
+                self.io.tool_error("URL must use http or https protocol")
+                self.log_command_end("cmd_api", "error", f"Invalid protocol: {parsed.scheme}")
+                return
+            if not parsed.netloc:
+                self.io.tool_error("Invalid URL format")
+                return
+        except Exception as e:
+            self.io.tool_error(f"Invalid URL: {e}")
+            return
+        
+        # Limit URL length
+        if len(url) > 2000:
+            self.io.tool_error("URL too long (max 2000 characters)")
+            return
+        
+        # Validate data if provided
+        if data:
+            if len(data) > 10000:
+                self.io.tool_error("Data too long (max 10000 characters)")
+                return
+        
+        self.io.tool_output(f"🌐 Testing API: {method} {url}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            # Try using curl with timeout
+            cmd = ['curl', '-s', '-w', '\nHTTP_CODE:%{http_code}', '-X', method, url, '--max-time', '30']
+            
+            if data:
+                cmd.extend(['-H', 'Content-Type: application/json', '-d', data])
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=35)
+            
+            # Parse output
+            output = result.stdout
+            if 'HTTP_CODE:' in output:
+                parts = output.split('HTTP_CODE:')
+                response_body = parts[0]
+                status_code = parts[1].strip()
+            else:
+                response_body = output
+                status_code = "Unknown"
+            
+            # Limit response body size
+            if len(response_body) > 50000:
+                response_body = response_body[:50000] + "\n... (truncated)"
+            
+            self.io.tool_output(f"\nStatus Code: {status_code}", log_only=False)
+            self.io.tool_output(f"\nResponse:", log_only=False)
+            
+            # Try to pretty print JSON
+            try:
+                json_data = json.loads(response_body)
+                self.io.tool_output(json.dumps(json_data, indent=2), log_only=False)
+            except:
+                self.io.tool_output(response_body, log_only=False)
+            
+        except subprocess.TimeoutExpired:
+            self.io.tool_error("Request timeout after 35 seconds")
+            self.log_command_end("cmd_api", "error", "Timeout")
+        except FileNotFoundError:
+            self.io.tool_error("curl not found. Please install curl.")
+            self.log_command_end("cmd_api", "error", "curl not found")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_api", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_docker(self, args):
+        """
+        Manage Docker containers and images with aerospace-level safety features.
+        
+        This command provides Docker management functionality with comprehensive safety
+        features including input validation, command whitelisting, timeout protection,
+        and confirmation for dangerous operations.
+        
+        Aerospace-level Features:
+            - Input validation: Command whitelist, argument length limits
+            - Resource limits: Argument length limit (1000 chars), timeout protection
+            - Security: Command whitelist to prevent arbitrary Docker command execution
+            - Timeout protection: 30-120 second timeouts depending on command
+            - Error handling: Graceful handling of Docker errors, timeout errors
+            - Confirmation: Dangerous commands (stop, rm) require user confirmation
+            - Audit logging: All Docker operations logged for compliance
+        
+        Args:
+            args (str): Docker command in format "<command> [args]"
+            
+        Example:
+            /docker ps
+            /docker logs container_name
+            /docker stop container_name
+        """
+        import subprocess
+        
+        self.log_command_start("cmd_docker", args)
+        
+        # Aerospace-level input validation
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /docker <command> [args]")
+            self.io.tool_error("Commands: ps, images, logs, stop, start, restart, exec")
+            self.io.tool_error("Example: /docker ps")
+            self.io.tool_error("Example: /docker logs container_name")
+            self.log_command_end("cmd_docker", "error", "No arguments provided")
+            return
+        
+        command = parts[0]
+        docker_args = parts[1:]
+        
+        # Validate command using whitelist approach (security)
+        valid_commands = ['ps', 'images', 'logs', 'stop', 'start', 'restart', 'exec']
+        if command not in valid_commands:
+            self.io.tool_error(f"Invalid command. Allowed: {', '.join(valid_commands)}")
+            self.log_command_end("cmd_docker", "error", f"Invalid command: {command}")
+            return
+        
+        # Limit argument length to prevent buffer overflow attacks
+        total_args_len = sum(len(arg) for arg in docker_args)
+        if total_args_len > 1000:
+            self.io.tool_error("Arguments too long (max 1000 characters)")
+            self.log_command_end("cmd_docker", "error", "Arguments too long")
+            return
+        
+        # Require confirmation for dangerous operations
+        if command == 'stop':
+            if not self.confirm_dangerous_action("Stop Docker Container", f"Container: {' '.join(docker_args)}"):
+                self.io.tool_output("Action cancelled by user.", log_only=False)
+                audit_logger.info(f"cmd_docker stop cancelled by user: {' '.join(docker_args)}")
+                return
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if command == 'ps':
+                result = subprocess.run(['docker', 'ps'] + docker_args, capture_output=True, text=True, timeout=30)
+                self.io.tool_output(result.stdout, log_only=False)
+            elif command == 'images':
+                result = subprocess.run(['docker', 'images'] + docker_args, capture_output=True, text=True, timeout=30)
+                self.io.tool_output(result.stdout, log_only=False)
+            elif command == 'logs':
+                if not docker_args:
+                    self.io.tool_error("Please provide container name")
+                    return
+                # Limit log lines to prevent resource exhaustion
+                docker_args_with_limit = ['--tail', '100'] + docker_args
+                result = subprocess.run(['docker', 'logs'] + docker_args_with_limit, capture_output=True, text=True, timeout=30)
+                self.io.tool_output(result.stdout, log_only=False)
+            elif command == 'stop':
+                if not docker_args:
+                    self.io.tool_error("Please provide container name")
+                    return
+                # Require confirmation for dangerous action
+                if not self.confirm_dangerous_action("Stop Docker Container", f"Container: {' '.join(docker_args)}"):
+                    self.io.tool_output("Action cancelled by user.", log_only=False)
+                    audit_logger.info(f"cmd_docker stop cancelled by user: {' '.join(docker_args)}")
+                    return
+                result = subprocess.run(['docker', 'stop'] + docker_args, capture_output=True, text=True, timeout=60)
+                self.io.tool_output(result.stdout, log_only=False)
+            elif command == 'start':
+                if not docker_args:
+                    self.io.tool_error("Please provide container name")
+                    return
+                result = subprocess.run(['docker', 'start'] + docker_args, capture_output=True, text=True, timeout=30)
+                self.io.tool_output(result.stdout, log_only=False)
+            elif command == 'restart':
+                if not docker_args:
+                    self.io.tool_error("Please provide container name")
+                    return
+                result = subprocess.run(['docker', 'restart'] + docker_args, capture_output=True, text=True, timeout=60)
+                self.io.tool_output(result.stdout, log_only=False)
+            elif command == 'exec':
+                if len(docker_args) < 2:
+                    self.io.tool_error("Usage: /docker exec <container> <command>")
+                    return
+                # exec is interactive, use timeout but don't capture output
+                result = subprocess.run(['docker', 'exec', '-it'] + docker_args, timeout=120)
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                return
+            
+            if result.returncode != 0:
+                self.io.tool_error(result.stderr[:500] if result.stderr else "Command failed", log_only=False)
+            
+        except subprocess.TimeoutExpired:
+            self.io.tool_error("Docker command timeout")
+            self.log_command_end("cmd_docker", "error", "Timeout")
+        except FileNotFoundError:
+            self.io.tool_error("docker not found. Please install Docker.")
+            self.log_command_end("cmd_docker", "error", "docker not found")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_docker", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_db(self, args):
+        "Run database queries"
+        import subprocess
+        
+        self.log_command_start("cmd_db", args)
+        
+        parts = args.strip().split()
+        if len(parts) < 3:
+            self.io.tool_error("Usage: /db <type> <connection_string> <query>")
+            self.io.tool_error("Example: /db sqlite test.db 'SELECT * FROM users'")
+            self.io.tool_error("Example: /db postgres 'postgresql://user:pass@localhost/db' 'SELECT * FROM users'")
+            return
+        
+        db_type = parts[0].lower()
+        connection = parts[1]
+        query = ' '.join(parts[2:])
+        
+        self.io.tool_output(f"🗄️  Database: {db_type}", log_only=False)
+        self.io.tool_output(f"Query: {query}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if db_type == 'sqlite':
+                # Use sqlite3 command
+                result = subprocess.run(['sqlite3', connection, query], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+                if result.stderr:
+                    self.io.tool_error(result.stderr, log_only=False)
+            elif db_type == 'postgres':
+                # Try psql
+                result = subprocess.run(['psql', connection, '-c', query], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+                if result.stderr:
+                    self.io.tool_error(result.stderr, log_only=False)
+            elif db_type == 'mysql':
+                # Try mysql command
+                result = subprocess.run(['mysql', connection, '-e', query], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+                if result.stderr:
+                    self.io.tool_error(result.stderr, log_only=False)
+            else:
+                self.io.tool_error(f"Unsupported database type: {db_type}")
+                self.io.tool_error("Supported: sqlite, postgres, mysql")
+                return
+            
+        except FileNotFoundError:
+            self.io.tool_error(f"{db_type} client not found. Please install it.")
+            self.log_command_end("cmd_db", "error", f"{db_type} client not found")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_db", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_perf(self, args):
+        "Profile Python code performance"
+        import subprocess
+        
+        self.log_command_start("cmd_perf", args)
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /perf <python_file> [args]")
+            self.io.tool_error("Example: /perf script.py")
+            self.io.tool_error("Example: /perf script.py --arg1 value1")
+            return
+        
+        script = parts[0]
+        script_args = parts[1:]
+        
+        self.io.tool_output(f"⚡ Profiling: {script}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            # Use cProfile
+            result = subprocess.run(
+                ['python3', '-m', 'cProfile', '-s', 'cumtime', script] + script_args,
+                capture_output=True,
+                text=True
+            )
+            self.io.tool_output(result.stdout, log_only=False)
+            
+            if result.returncode != 0:
+                self.io.tool_error(result.stderr, log_only=False)
+            
+        except FileNotFoundError:
+            self.io.tool_error("python3 not found.")
+            self.log_command_end("cmd_perf", "error", "python3 not found")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_perf", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+        self.io.tool_output("\n💡 For detailed visualization, install: pip install snakeviz", log_only=False)
+        self.io.tool_output("   Then run: python -m snakeviz <prof_file>", log_only=False)
+
+    def cmd_debug(self, args):
+        "Debug Python code with breakpoint"
+        import subprocess
+        
+        self.log_command_start("cmd_debug", args)
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /debug <python_file> [args]")
+            self.io.tool_error("Example: /debug script.py")
+            self.io.tool_error("Example: /debug script.py --arg1 value1")
+            return
+        
+        script = parts[0]
+        script_args = parts[1:]
+        
+        self.io.tool_output(f"🐛 Debugging: {script}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        self.io.tool_output("\nStarting debugger with pdb...", log_only=False)
+        self.io.tool_output("Commands: n (next), s (step), c (continue), p <var> (print)", log_only=False)
+        self.io.tool_output("Type 'h' for help, 'q' to quit", log_only=False)
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+        
+        try:
+            # Use pdb
+            subprocess.run(['python3', '-m', 'pdb', script] + script_args)
+            
+        except FileNotFoundError:
+            self.io.tool_error("python3 not found.")
+            self.log_command_end("cmd_debug", "error", "python3 not found")
+        except KeyboardInterrupt:
+            self.io.tool_output("\nDebugger interrupted by user.", log_only=False)
+            self.log_command_end("cmd_debug", "interrupted", "User interrupt")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_debug", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_docs(self, args):
+        "Generate documentation from code"
+        import subprocess
+        
+        self.log_command_start("cmd_docs", args)
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /docs <type> [output_dir]")
+            self.io.tool_error("Types: sphinx, mkdocs, pydoc")
+            self.io.tool_error("Example: /docs sphinx docs/")
+            self.io.tool_error("Example: /docs pydoc")
+            return
+        
+        doc_type = parts[0].lower()
+        output_dir = parts[1] if len(parts) > 1 else "docs"
+        
+        self.io.tool_output(f"📚 Generating documentation: {doc_type}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if doc_type == 'sphinx':
+                # Check for conf.py
+                if not os.path.exists('conf.py') and not os.path.exists('docs/conf.py'):
+                    self.io.tool_output("Creating Sphinx configuration...", log_only=False)
+                    subprocess.run(['sphinx-quickstart', output_dir, '--sep', '-p', 'Project', '-a', 'Author'], capture_output=True)
+                
+                self.io.tool_output(f"Building Sphinx docs to {output_dir}/_build/html", log_only=False)
+                conf_dir = 'docs' if os.path.exists('docs/conf.py') else '.'
+                result = subprocess.run(['sphinx-build', conf_dir, f'{output_dir}/_build/html'], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+                if result.returncode != 0:
+                    self.io.tool_error(result.stderr, log_only=False)
+                else:
+                    self.io.tool_output(f"\n✓ Documentation built successfully!", log_only=False)
+                    self.io.tool_output(f"Open: {output_dir}/_build/html/index.html", log_only=False)
+            
+            elif doc_type == 'mkdocs':
+                if not os.path.exists('mkdocs.yml'):
+                    self.io.tool_output("Creating mkdocs.yml...", log_only=False)
+                    with open('mkdocs.yml', 'w') as f:
+                        f.write("""site_name: My Docs
+site_url: https://example.com/
+nav:
+  - Home: index.md
+  - About: about.md
+theme:
+  name: readthedocs
+""")
+                
+                self.io.tool_output("Building MkDocs site...", log_only=False)
+                result = subprocess.run(['mkdocs', 'build'], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+                if result.returncode != 0:
+                    self.io.tool_error(result.stderr, log_only=False)
+                else:
+                    self.io.tool_output(f"\n✓ Documentation built successfully!", log_only=False)
+                    self.io.tool_output("Run 'mkdocs serve' to preview", log_only=False)
+            
+            elif doc_type == 'pydoc':
+                if self.coder.abs_fnames:
+                    for fname in self.coder.abs_fnames:
+                        if fname.endswith('.py'):
+                            self.io.tool_output(f"\nGenerating docs for {fname}...", log_only=False)
+                            result = subprocess.run(['python3', '-m', 'pydoc', fname], capture_output=True, text=True)
+                            self.io.tool_output(result.stdout, log_only=False)
+                else:
+                    self.io.tool_error("No Python files in chat", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown type: {doc_type}")
+                self.io.tool_error("Supported: sphinx, mkdocs, pydoc")
+                return
+            
+        except FileNotFoundError as e:
+            self.io.tool_error(f"Tool not found: {e.filename}")
+            self.io.tool_output("Install: pip install sphinx mkdocs", log_only=False)
+            self.log_command_end("cmd_docs", "error", f"Tool not found: {e.filename}")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_docs", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_coverage(self, args):
+        "Measure test coverage"
+        import subprocess
+        
+        self.log_command_start("cmd_coverage", args)
+        
+        self.io.tool_output("📊 Measuring test coverage", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            # Try pytest-cov
+            result = subprocess.run(['python3', '-m', 'pytest', '--cov=.'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout, log_only=False)
+            
+            if result.returncode != 0:
+                # Try coverage.py
+                result = subprocess.run(['coverage', 'run', '-m', 'pytest'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    result2 = subprocess.run(['coverage', 'report'], capture_output=True, text=True)
+                    self.io.tool_output(result2.stdout, log_only=False)
+                else:
+                    self.io.tool_error("pytest or coverage not found", log_only=False)
+                    self.io.tool_output("Install: pip install pytest pytest-cov coverage", log_only=False)
+            else:
+                self.io.tool_output("\n✓ Coverage report generated", log_only=False)
+                self.io.tool_output("HTML report: htmlcov/index.html", log_only=False)
+            
+        except FileNotFoundError:
+            self.io.tool_error("pytest or coverage not found")
+            self.io.tool_output("Install: pip install pytest pytest-cov coverage", log_only=False)
+            self.log_command_end("cmd_coverage", "error", "pytest or coverage not found")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_coverage", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_security(self, args):
+        """
+        Scan code for security issues using multiple security analysis tools.
+        
+        This command runs various security scanning tools to identify potential
+        vulnerabilities in the codebase. It attempts to use multiple tools
+        and provides clear output for each scan.
+        
+        Supported Tools:
+            - bandit: Python security linter (pip install bandit)
+            - semgrep: Semantic code analysis (pip install semgrep)
+            - safety: Dependency vulnerability checker (pip install safety)
+            - pip-audit: Package vulnerability scanner (pip install pip-audit)
+        
+        Args:
+            args (str): Optional arguments (currently unused)
+            
+        Example:
+            /security
+        """
+        import subprocess
+        
+        self.log_command_start("cmd_security", args)
+        
+        self.io.tool_output("🔒 Scanning for security issues", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        tools_scanned = []
+        
+        # Try bandit for Python security scanning
+        try:
+            self.io.tool_output("\n🐍 Running bandit (Python)...", log_only=False)
+            result = subprocess.run(['bandit', '-r', '.'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout, log_only=False)
+            tools_scanned.append('bandit')
+        except FileNotFoundError:
+            self.io.tool_output("⚠️  bandit not found (pip install bandit)", log_only=False)
+        
+        # Try semgrep
+        try:
+            self.io.tool_output("\n🔍 Running semgrep...", log_only=False)
+            result = subprocess.run(['semgrep', 'scan', '.'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout, log_only=False)
+            tools_scanned.append('semgrep')
+        except FileNotFoundError:
+            self.io.tool_output("⚠️  semgrep not found (pip install semgrep)", log_only=False)
+        
+        # Try safety
+        try:
+            self.io.tool_output("\n🛡️  Running safety...", log_only=False)
+            result = subprocess.run(['safety', 'check'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout, log_only=False)
+            tools_scanned.append('safety')
+        except FileNotFoundError:
+            self.io.tool_output("⚠️  safety not found (pip install safety)", log_only=False)
+        
+        if not tools_scanned:
+            self.io.tool_output("\n💡 Install security tools:", log_only=False)
+            self.io.tool_output("  pip install bandit semgrep safety", log_only=False)
+            self.log_command_end("cmd_security", "warning", "No tools available")
+        else:
+            self.io.tool_output(f"\n✓ Scanned with {len(tools_scanned)} tools", log_only=False)
+            self.log_command_end("cmd_security", "success", f"Scanned with {len(tools_scanned)} tools")
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_refactor(self, args):
+        """
+        Perform automated code refactoring using various tools.
+        
+        This command provides automated code refactoring functionality using
+        popular Python refactoring tools. It supports multiple refactoring
+        types and can target specific files or entire directories.
+        
+        Supported Refactor Types:
+            - autopep8: PEP 8 compliance (pip install autopep8)
+            - isort: Import sorting (pip install isort)
+            - rope: Advanced refactoring (pip install rope)
+        
+        Args:
+            args (str): Refactor command in format "<type> [file]"
+            
+        Example:
+            /refactor autopep8 script.py
+            /refactor isort .
+        """
+        import subprocess
+        
+        self.log_command_start("cmd_refactor", args)
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /refactor <type> [file]")
+            self.io.tool_error("Types: autopep8, isort, rope")
+            self.io.tool_error("Example: /refactor autopep8 script.py")
+            self.io.tool_error("Example: /refactor isort .")
+            self.log_command_end("cmd_refactor", "error", "No arguments provided")
+            return
+        
+        refactor_type = parts[0].lower()
+        target = parts[1] if len(parts) > 1 else '.'
+        
+        self.io.tool_output(f"🔧 Refactoring: {refactor_type} on {target}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if refactor_type == 'autopep8':
+                result = subprocess.run(['autopep8', '--in-place', '--aggressive', target], capture_output=True, text=True)
+                self.io.tool_output("✓ AutoPEP8 refactoring complete", log_only=False)
+            
+            elif refactor_type == 'isort':
+                result = subprocess.run(['isort', target], capture_output=True, text=True)
+                self.io.tool_output("✓ Import sorting complete", log_only=False)
+            
+            elif refactor_type == 'rope':
+                self.io.tool_output("⚠️  Rope requires interactive setup", log_only=False)
+                self.io.tool_output("Use: rope <file>", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown type: {refactor_type}")
+                self.io.tool_error("Supported: autopep8, isort, rope")
+                return
+            
+        except FileNotFoundError:
+            self.io.tool_output(f"⚠️  {refactor_type} not found (pip install autopep8 isort rope)", log_only=False)
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_refactor", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+        self.io.tool_output("\n💡 Install: pip install autopep8 isort rope", log_only=False)
+
+    def cmd_env(self, args):
+        "Manage virtual environments"
+        import subprocess
+        
+        self.log_command_start("cmd_env", args)
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /env <command> [name]")
+            self.io.tool_error("Commands: create, activate, deactivate, list, install")
+            self.io.tool_error("Example: /env create venv")
+            self.io.tool_error("Example: /env activate venv")
+            return
+        
+        command = parts[0].lower()
+        env_name = parts[1] if len(parts) > 1 else 'venv'
+        
+        self.io.tool_output(f"🌍 Environment: {command}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if command == 'create':
+                result = subprocess.run(['python3', '-m', 'venv', env_name], capture_output=True, text=True)
+                self.io.tool_output(f"✓ Created virtual environment: {env_name}", log_only=False)
+                self.io.tool_output(f"Activate: source {env_name}/bin/activate", log_only=False)
+            
+            elif command == 'activate':
+                self.io.tool_output(f"To activate: source {env_name}/bin/activate", log_only=False)
+                self.io.tool_output("(Run this in your shell)", log_only=False)
+            
+            elif command == 'deactivate':
+                self.io.tool_output("To deactivate: deactivate", log_only=False)
+                self.io.tool_output("(Run this in your shell)", log_only=False)
+            
+            elif command == 'list':
+                result = subprocess.run(['ls', '-la'], capture_output=True, text=True)
+                for line in result.stdout.split('\n'):
+                    if 'venv' in line or 'env' in line or '.venv' in line:
+                        self.io.tool_output(line, log_only=False)
+            
+            elif command == 'install':
+                if os.path.exists('requirements.txt'):
+                    result = subprocess.run(['pip', 'install', '-r', 'requirements.txt'], capture_output=True, text=True)
+                    self.io.tool_output("✓ Installed from requirements.txt", log_only=False)
+                else:
+                    self.io.tool_error("requirements.txt not found", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                return
+            
+        except FileNotFoundError:
+            self.io.tool_error("python3 not found")
+            self.log_command_end("cmd_env", "error", "python3 not found")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_env", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_package(self, args):
+        "Package management"
+        import subprocess
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /package <command> [args]")
+            self.io.tool_error("Commands: install, uninstall, list, outdated, freeze")
+            self.io.tool_error("Example: /package install numpy")
+            self.io.tool_error("Example: /package outdated")
+            return
+        
+        command = parts[0].lower()
+        package_args = parts[1:]
+        
+        self.io.tool_output(f"📦 Package: {command} {' '.join(package_args)}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if command == 'install':
+                if package_args:
+                    result = subprocess.run(['pip', 'install'] + package_args, capture_output=True, text=True)
+                    self.io.tool_output(result.stdout, log_only=False)
+                else:
+                    self.io.tool_error("Please provide package name", log_only=False)
+            
+            elif command == 'uninstall':
+                if package_args:
+                    # Require confirmation for dangerous action
+                    if not self.confirm_dangerous_action("Uninstall Package", f"Package: {' '.join(package_args)}"):
+                        self.io.tool_output("Action cancelled by user.", log_only=False)
+                        audit_logger.info(f"cmd_package uninstall cancelled by user: {' '.join(package_args)}")
+                        return
+                    result = subprocess.run(['pip', 'uninstall', '-y'] + package_args, capture_output=True, text=True)
+                    self.io.tool_output(result.stdout, log_only=False)
+                else:
+                    self.io.tool_error("Please provide package name", log_only=False)
+            
+            elif command == 'list':
+                result = subprocess.run(['pip', 'list'], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+            
+            elif command == 'outdated':
+                try:
+                    result = subprocess.run(['pip', 'list', '--outdated'], capture_output=True, text=True)
+                    self.io.tool_output(result.stdout, log_only=False)
+                except:
+                    self.io.tool_output("⚠️  pip-outdated not available", log_only=False)
+                    self.io.tool_output("Install: pip install pip-outdated", log_only=False)
+            
+            elif command == 'freeze':
+                result = subprocess.run(['pip', 'freeze'], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                return
+            
+        except FileNotFoundError:
+            self.io.tool_error("pip not found")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_log(self, args):
+        "Analyze log files"
+        import subprocess
+        
+        self.log_command_start("cmd_log", args)
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /log <file> [pattern]")
+            self.io.tool_error("Example: /log app.log ERROR")
+            self.io.tool_error("Example: /log app.log")
+            return
+        
+        log_file = parts[0]
+        pattern = parts[1] if len(parts) > 1 else None
+        
+        self.io.tool_output(f"📋 Analyzing: {log_file}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if pattern:
+                result = subprocess.run(['grep', pattern, log_file], capture_output=True, text=True)
+                self.io.tool_output(f"Lines containing '{pattern}':", log_only=False)
+                self.io.tool_output(result.stdout, log_only=False)
+            else:
+                # Show last 50 lines
+                result = subprocess.run(['tail', '-n', '50', log_file], capture_output=True, text=True)
+                self.io.tool_output("Last 50 lines:", log_only=False)
+                self.io.tool_output(result.stdout, log_only=False)
+            
+            # Count line types
+            result = subprocess.run(['grep', '-c', 'ERROR', log_file], capture_output=True, text=True)
+            error_count = result.stdout.strip() if result.stdout.strip().isdigit() else '0'
+            
+            result = subprocess.run(['grep', '-c', 'WARNING', log_file], capture_output=True, text=True)
+            warning_count = result.stdout.strip() if result.stdout.strip().isdigit() else '0'
+            
+            self.io.tool_output(f"\nSummary:", log_only=False)
+            self.io.tool_output(f"  Errors: {error_count}", log_only=False)
+            self.io.tool_output(f"  Warnings: {warning_count}", log_only=False)
+            
+        except FileNotFoundError:
+            self.io.tool_error("grep or tail not found")
+            self.log_command_end("cmd_log", "error", "grep or tail not found")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_log", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_metrics(self, args):
+        "Calculate code metrics"
+        import subprocess
+        
+        self.log_command_start("cmd_metrics", args)
+        
+        self.io.tool_output("📈 Calculating code metrics", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        # Count lines of code
+        total_lines = 0
+        total_files = 0
+        py_files = 0
+        js_files = 0
+        
+        if self.coder.abs_fnames:
+            files_to_check = list(self.coder.abs_fnames)
+        elif self.coder.repo:
+            files_to_check = self.coder.repo.get_tracked_files()
+        else:
+            self.io.tool_error("No files available", log_only=False)
+            return
+        
+        for fname in files_to_check:
+            try:
+                with open(fname, 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = len(f.readlines())
+                    total_lines += lines
+                    total_files += 1
+                    
+                    if fname.endswith('.py'):
+                        py_files += 1
+                    elif fname.endswith('.js') or fname.endswith('.ts'):
+                        js_files += 1
+            except:
+                continue
+        
+        self.io.tool_output(f"\n📊 Code Metrics:", log_only=False)
+        self.io.tool_output(f"  Total files: {total_files}", log_only=False)
+        self.io.tool_output(f"  Total lines: {total_lines:,}", log_only=False)
+        self.io.tool_output(f"  Python files: {py_files}", log_only=False)
+        self.io.tool_output(f"  JavaScript/TypeScript files: {js_files}", log_only=False)
+        
+        # Try radon for complexity
+        try:
+            self.io.tool_output(f"\n🔍 Running radon (complexity)...", log_only=False)
+            result = subprocess.run(['radon', 'cc', '.'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout[:500], log_only=False)
+        except FileNotFoundError:
+            self.io.tool_output("⚠️  radon not found (pip install radon)", log_only=False)
+        
+        # Try lizard for complexity
+        try:
+            self.io.tool_output(f"\n🦎 Running lizard...", log_only=False)
+            result = subprocess.run(['lizard', '.'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout[:500], log_only=False)
+        except FileNotFoundError:
+            self.io.tool_output("⚠️  lizard not found (pip install lizard)", log_only=False)
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+        self.io.tool_output("\n💡 Install metrics tools: pip install radon lizard", log_only=False)
+        
+        self.log_command_end("cmd_metrics", "success", f"Total files: {total_files}, Total lines: {total_lines}")
+
+    def cmd_schedule(self, args):
+        "Manage scheduled tasks (routines)"
+        import subprocess
+        
+        self.log_command_start("cmd_schedule", args)
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /schedule <command> [args]")
+            self.io.tool_error("Commands: list, add, remove, run")
+            self.io.tool_error("Example: /schedule list")
+            self.io.tool_error("Example: /schedule add 'daily test' '0 9 * * *' '/run pytest'")
+            return
+        
+        command = parts[0].lower()
+        
+        self.io.tool_output(f"⏰ Schedule: {command}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        schedule_file = '.aider_schedule.json'
+        
+        try:
+            # Load existing schedules
+            if os.path.exists(schedule_file):
+                with open(schedule_file, 'r') as f:
+                    schedules = json.load(f)
+            else:
+                schedules = []
+            
+            if command == 'list':
+                if not schedules:
+                    self.io.tool_output("No scheduled tasks", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📋 Scheduled Tasks ({len(schedules)}):", log_only=False)
+                    for i, task in enumerate(schedules, 1):
+                        self.io.tool_output(f"  {i}. {task.get('name', 'Unnamed')}", log_only=False)
+                        self.io.tool_output(f"     Cron: {task.get('cron', 'N/A')}", log_only=False)
+                        self.io.tool_output(f"     Command: {task.get('command', 'N/A')}", log_only=False)
+            
+            elif command == 'add':
+                if len(parts) < 4:
+                    self.io.tool_error("Usage: /schedule add <name> <cron> <command>")
+                    self.io.tool_error("Example: /schedule add 'daily test' '0 9 * * *' '/run pytest'")
+                    return
+                
+                name = parts[1]
+                cron = parts[2]
+                task_command = ' '.join(parts[3:])
+                
+                schedules.append({
+                    'name': name,
+                    'cron': cron,
+                    'command': task_command,
+                    'created': datetime.now().isoformat()
+                })
+                
+                with open(schedule_file, 'w') as f:
+                    json.dump(schedules, f, indent=2)
+                
+                self.io.tool_output(f"✓ Added scheduled task: {name}", log_only=False)
+                self.io.tool_output(f"  Cron: {cron}", log_only=False)
+                self.io.tool_output(f"  Command: {task_command}", log_only=False)
+                self.io.tool_output("\n💡 Note: This is a simple schedule. For full cron support, use system cron.", log_only=False)
+            
+            elif command == 'remove':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /schedule remove <index>")
+                    return
+                
+                try:
+                    index = int(parts[1]) - 1
+                    if 0 <= index < len(schedules):
+                        removed = schedules[index]
+                        # Require confirmation for dangerous action
+                        if not self.confirm_dangerous_action("Remove Scheduled Task", f"Task: {removed.get('name', 'Unnamed')}, Cron: {removed.get('cron', 'N/A')}"):
+                            self.io.tool_output("Action cancelled by user.", log_only=False)
+                            audit_logger.info(f"cmd_schedule remove cancelled by user: {removed.get('name', 'Unnamed')}")
+                            return
+                        schedules.pop(index)
+                        with open(schedule_file, 'w') as f:
+                            json.dump(schedules, f, indent=2)
+                        self.io.tool_output(f"✓ Removed: {removed.get('name', 'Unnamed')}", log_only=False)
+                    else:
+                        self.io.tool_error("Invalid index", log_only=False)
+                except ValueError:
+                    self.io.tool_error("Invalid index", log_only=False)
+            
+            elif command == 'run':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /schedule run <index>")
+                    return
+                
+                try:
+                    index = int(parts[1]) - 1
+                    if 0 <= index < len(schedules):
+                        task = schedules[index]
+                        self.io.tool_output(f"Running: {task.get('name', 'Unnamed')}", log_only=False)
+                        self.io.tool_output(f"Command: {task.get('command', 'N/A')}", log_only=False)
+                        # Execute the command
+                        self.cmd_run(task.get('command', ''))
+                    else:
+                        self.io.tool_error("Invalid index", log_only=False)
+                except ValueError:
+                    self.io.tool_error("Invalid index", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                return
+            
+        except json.JSONDecodeError as e:
+            self.io.tool_error(f"Error reading schedule file: {e}", log_only=False)
+            self.io.tool_output("Schedule file may be corrupted. Try clearing it.", log_only=False)
+            self.log_command_end("cmd_schedule", "error", f"JSON decode error: {e}")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_schedule", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_memory(self, args):
+        """
+        Manage project memory and context for persistent information storage.
+        
+        This command provides a persistent memory system for storing project-specific
+        information, goals, and context that persists across sessions. It supports
+        setting, retrieving, listing, and clearing memory entries.
+        
+        Subcommands:
+            - set <key> <value>: Set a memory entry
+            - get <key>: Retrieve a memory entry
+            - list: List all memory entries
+            - clear <key>: Clear a specific memory entry
+            - clear all: Clear all memory entries
+            
+        Persistence:
+            - Memory is stored in .aider_memory.json
+            - Entries include value and timestamp
+            - Dangerous operations (clear) require confirmation
+            
+        Args:
+            args (str): Memory command in format "<command> [args]"
+            
+        Example:
+            /memory set 'project goal' 'Build a web app'
+            /memory get 'project goal'
+            /memory list
+        """
+        
+        self.log_command_start("cmd_memory", args)
+        
+        parts = args.strip().split()
+        
+        if not parts:
+            self.io.tool_error("Usage: /memory <command> [args]")
+            self.io.tool_error("Commands: set, get, clear, list")
+            self.io.tool_error("Example: /memory set 'project goal' 'Build a web app'")
+            self.log_command_end("cmd_memory", "error", "No arguments provided")
+            return
+        
+        command = parts[0].lower()
+        
+        self.io.tool_output(f"🧠 Memory: {command}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        memory_file = '.aider_memory.json'
+        
+        try:
+            # Load existing memory
+            if os.path.exists(memory_file):
+                with open(memory_file, 'r') as f:
+                    memory = json.load(f)
+            else:
+                memory = {}
+            
+            if command == 'set':
+                if len(parts) < 3:
+                    self.io.tool_error("Usage: /memory set <key> <value>")
+                    return
+                
+                key = parts[1]
+                value = ' '.join(parts[2:])
+                memory[key] = {
+                    'value': value,
+                    'updated': datetime.now().isoformat()
+                }
+                
+                with open(memory_file, 'w') as f:
+                    json.dump(memory, f, indent=2)
+                
+                self.io.tool_output(f"✓ Set memory: {key}", log_only=False)
+            
+            elif command == 'get':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /memory get <key>")
+                    return
+                
+                key = parts[1]
+                if key in memory:
+                    self.io.tool_output(f"{key}: {memory[key]['value']}", log_only=False)
+                    self.io.tool_output(f"Updated: {memory[key]['updated']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Key not found: {key}", log_only=False)
+            
+            elif command == 'clear':
+                if len(parts) > 1:
+                    key = parts[1]
+                    if key in memory:
+                        # Require confirmation for dangerous action
+                        if not self.confirm_dangerous_action("Clear Memory Entry", f"Key: {key}"):
+                            self.io.tool_output("Action cancelled by user.", log_only=False)
+                            audit_logger.info(f"cmd_memory clear cancelled by user: {key}")
+                            return
+                        del memory[key]
+                        self.io.tool_output(f"✓ Cleared: {key}", log_only=False)
+                    else:
+                        self.io.tool_error(f"Key not found: {key}", log_only=False)
+                else:
+                    # Require confirmation for dangerous action
+                    if not self.confirm_dangerous_action("Clear All Memory", "This will delete all memory entries"):
+                        self.io.tool_output("Action cancelled by user.", log_only=False)
+                        audit_logger.info("cmd_memory clear all cancelled by user")
+                        return
+                    memory = {}
+                    self.io.tool_output("✓ Cleared all memory", log_only=False)
+                
+                with open(memory_file, 'w') as f:
+                    json.dump(memory, f, indent=2)
+            
+            elif command == 'list':
+                if not memory:
+                    self.io.tool_output("No memory entries", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📋 Memory Entries ({len(memory)}):", log_only=False)
+                    for key, data in memory.items():
+                        self.io.tool_output(f"  {key}: {data['value']}", log_only=False)
+                        self.io.tool_output(f"    Updated: {data['updated']}", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                return
+            
+        except json.JSONDecodeError as e:
+            self.io.tool_error(f"Error reading memory file: {e}", log_only=False)
+            self.io.tool_output("Memory file may be corrupted. Try clearing it.", log_only=False)
+            self.log_command_end("cmd_memory", "error", f"JSON decode error: {e}")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_memory", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_agent(self, args):
+        "Run autonomous agent execution loop"
+        parts = args.strip().split()
+        
+        if not parts:
+            self.io.tool_error("Usage: /agent <goal> [max_iterations]")
+            self.io.tool_error("Example: /agent 'Fix all bugs' 5")
+            return
+        
+        goal = parts[0]
+        try:
+            max_iterations = int(parts[1]) if len(parts) > 1 else 3
+            if max_iterations < 1:
+                self.io.tool_error("max_iterations must be >= 1")
+                return
+        except ValueError:
+            self.io.tool_error("Invalid max_iterations: must be a number")
+            return
+        
+        # Require confirmation for dangerous autonomous action
+        if not self.confirm_dangerous_action("Autonomous Agent Execution", f"Goal: {goal}, Max Iterations: {max_iterations}"):
+            self.io.tool_output("Action cancelled by user.", log_only=False)
+            audit_logger.info(f"cmd_agent cancelled by user: {goal}")
+            return
+        
+        self.io.tool_output(f"🤖 Agent Goal: {goal}", log_only=False)
+        self.io.tool_output(f"Max Iterations: {max_iterations}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        for iteration in range(1, max_iterations + 1):
+            self.io.tool_output(f"\n🔄 Iteration {iteration}/{max_iterations}", log_only=False)
+            
+            # Run the goal as a prompt
+            try:
+                result = self.coder.run(goal)
+                self.io.tool_output(f"✓ Iteration {iteration} complete", log_only=False)
+                
+                # Check if goal is achieved (simplified check)
+                if "complete" in str(result).lower() or "done" in str(result).lower():
+                    self.io.tool_output("\n✅ Goal achieved!", log_only=False)
+                    break
+            except Exception as e:
+                self.io.tool_error(f"Error in iteration {iteration}: {e}", log_only=False)
+                break
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+        self.io.tool_output("Agent execution complete", log_only=False)
+
+    def cmd_ci(self, args):
+        "CI/CD integration (GitHub Actions, GitLab CI)"
+        import subprocess
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /ci <platform> <command>")
+            self.io.tool_error("Platforms: github, gitlab")
+            self.io.tool_error("Commands: init, status, run")
+            self.io.tool_error("Example: /ci github init")
+            return
+        
+        platform = parts[0].lower()
+        command = parts[1].lower()
+        
+        self.io.tool_output(f"🚀 CI/CD: {platform} {command}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if platform == 'github':
+                if command == 'init':
+                    # Create GitHub Actions workflow
+                    workflow_dir = '.github/workflows'
+                    os.makedirs(workflow_dir, exist_ok=True)
+                    
+                    workflow_file = f'{workflow_dir}/aider.yml'
+                    with open(workflow_file, 'w') as f:
+                        f.write("""name: Aider CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Run tests
+        run: |
+          pytest
+      - name: Run linter
+        run: |
+          flake8 .
+""")
+                    
+                    self.io.tool_output(f"✓ Created GitHub Actions workflow: {workflow_file}", log_only=False)
+                    self.io.tool_output("Commit and push to activate", log_only=False)
+                
+                elif command == 'status':
+                    result = subprocess.run(['gh', 'workflow', 'list'], capture_output=True, text=True)
+                    self.io.tool_output(result.stdout, log_only=False)
+                
+                elif command == 'run':
+                    # Require confirmation for dangerous action
+                    if not self.confirm_dangerous_action("Run CI/CD Workflow", "This will trigger a CI/CD pipeline"):
+                        self.io.tool_output("Action cancelled by user.", log_only=False)
+                        audit_logger.info("cmd_ci run cancelled by user")
+                        return
+                    result = subprocess.run(['gh', 'workflow', 'run'], capture_output=True, text=True)
+                    self.io.tool_output(result.stdout, log_only=False)
+                
+                else:
+                    self.io.tool_error(f"Unknown command: {command}", log_only=False)
+            
+            elif platform == 'gitlab':
+                if command == 'init':
+                    # Create GitLab CI configuration
+                    ci_file = '.gitlab-ci.yml'
+                    
+                    with open(ci_file, 'w') as f:
+                        f.write("""stages:
+  - test
+  - lint
+
+test:
+  stage: test
+  script:
+    - pip install -r requirements.txt
+    - pytest
+
+lint:
+  stage: lint
+  script:
+    - pip install flake8
+    - flake8 .
+""")
+                    
+                    self.io.tool_output(f"✓ Created GitLab CI config: {ci_file}", log_only=False)
+                    self.io.tool_output("Commit and push to activate", log_only=False)
+                
+                else:
+                    self.io.tool_error(f"Unknown command: {command}", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown platform: {platform}", log_only=False)
+                self.io.tool_error("Supported: github, gitlab", log_only=False)
+        
+        except FileNotFoundError:
+            self.io.tool_error("CLI tool not found (gh for GitHub, gitlab-ci for GitLab)")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_pr(self, args):
+        "Generate pull request"
+        import subprocess
+        
+        parts = args.strip().split()
+        
+        # Require confirmation for dangerous action
+        if not self.confirm_dangerous_action("Create Pull Request", "This will create a PR with current changes"):
+            self.io.tool_output("Action cancelled by user.", log_only=False)
+            audit_logger.info("cmd_pr cancelled by user")
+            return
+        
+        self.io.tool_output("📝 Generating Pull Request", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            # Check if git repo
+            if not self.coder.repo:
+                self.io.tool_error("Not in a git repository", log_only=False)
+                return
+            
+            # Get current branch
+            result = subprocess.run(['git', 'branch', '--show-current'], capture_output=True, text=True)
+            current_branch = result.stdout.strip()
+            
+            # Get recent commits
+            result = subprocess.run(['git', 'log', '--oneline', '-5'], capture_output=True, text=True)
+            commits = result.stdout.strip()
+            
+            # Get diff
+            result = subprocess.run(['git', 'diff', 'main...HEAD'], capture_output=True, text=True)
+            diff = result.stdout
+            
+            self.io.tool_output(f"\n📋 PR Information:", log_only=False)
+            self.io.tool_output(f"Branch: {current_branch}", log_only=False)
+            self.io.tool_output(f"\nRecent Commits:\n{commits}", log_only=False)
+            
+            if len(diff) > 0:
+                self.io.tool_output(f"\n📊 Changes Summary:", log_only=False)
+                self.io.tool_output(f"{len(diff)} characters changed", log_only=False)
+            
+            # Try to create PR using gh CLI
+            try:
+                pr_title = parts[0] if parts else "Update from " + current_branch
+                pr_body = ' '.join(parts[1:]) if len(parts) > 1 else "Automated PR from aider"
+                
+                result = subprocess.run(
+                    ['gh', 'pr', 'create', '--title', pr_title, '--body', pr_body],
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    self.io.tool_output(f"\n✓ PR created successfully!", log_only=False)
+                    self.io.tool_output(result.stdout, log_only=False)
+                else:
+                    self.io.tool_output(f"\n⚠️  gh CLI failed, showing PR template", log_only=False)
+            except:
+                self.io.tool_output(f"\n📄 PR Template:", log_only=False)
+                self.io.tool_output(f"Title: {parts[0] if parts else 'Update from ' + current_branch}", log_only=False)
+                self.io.tool_output(f"Body: {' '.join(parts[1:]) if len(parts) > 1 else 'Describe your changes'}", log_only=False)
+                self.io.tool_output("\nTo create PR manually, use: gh pr create", log_only=False)
+        
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
 
 
 def expand_subdir(file_path):

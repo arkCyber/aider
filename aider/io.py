@@ -1,3 +1,23 @@
+"""
+Aider I/O Module
+
+This module handles all input/output operations for the Aider AI coding assistant.
+It provides a rich terminal interface with syntax highlighting, auto-completion,
+and markdown rendering capabilities.
+
+Key Features:
+- Rich terminal UI with syntax highlighting using pygments
+- Auto-completion for commands and filenames
+- Markdown rendering for AI responses
+- File I/O operations with encoding support
+- Command history and persistence
+- Error handling and user feedback
+- Multiline input mode support
+
+The IO class serves as the central I/O handler, managing user interaction,
+display formatting, and command processing.
+"""
+
 import base64
 import functools
 import os
@@ -39,12 +59,23 @@ from .dump import dump  # noqa: F401
 from .editor import pipe_editor
 from .utils import is_image_file
 
-# Constants
+# Constants for UI elements
 NOTIFICATION_MESSAGE = "Aider is waiting for your input"
 
 
 def ensure_hash_prefix(color):
-    """Ensure hex color values have a # prefix."""
+    """
+    Ensure hex color values have a # prefix for proper formatting.
+    
+    This utility function validates and formats hex color codes to ensure
+    they have the proper # prefix for rich terminal styling.
+    
+    Args:
+        color (str): Color value with or without # prefix
+        
+    Returns:
+        str: Color value with # prefix if valid, otherwise unchanged
+    """
     if not color:
         return color
     if isinstance(color, str) and color.strip() and not color.startswith("#"):
@@ -55,7 +86,19 @@ def ensure_hash_prefix(color):
 
 
 def restore_multiline(func):
-    """Decorator to restore multiline mode after function execution"""
+    """
+    Decorator to restore multiline mode after function execution.
+    
+    This decorator ensures that the multiline mode state is preserved
+    across function calls, allowing temporary mode changes without
+    affecting the persistent state.
+    
+    Args:
+        func: The function to wrap
+        
+    Returns:
+        Wrapped function that restores multiline mode after execution
+    """
 
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
@@ -72,26 +115,72 @@ def restore_multiline(func):
 
 
 class CommandCompletionException(Exception):
-    """Raised when a command should use the normal autocompleter instead of
-    command-specific completion."""
+    """
+    Exception raised when a command should use the normal autocompleter.
+    
+    This exception is used to signal that command-specific completion
+    should be bypassed in favor of the standard autocompleter.
+    """
 
     pass
 
 
 @dataclass
 class ConfirmGroup:
+    """
+    Data class for grouping confirmation prompts.
+    
+    This class manages groups of confirmation prompts, allowing for
+    organized and structured user confirmation workflows.
+    
+    Attributes:
+        preference: User's preference for this confirmation group
+        show_group: Whether to display the group header
+    """
     preference: str = None
     show_group: bool = True
 
     def __init__(self, items=None):
+        """
+        Initialize the confirmation group.
+        
+        Args:
+            items: List of items in the group (used to determine if group should be shown)
+        """
         if items is not None:
             self.show_group = len(items) > 1
 
 
 class AutoCompleter(Completer):
+    """
+    Auto-completion handler for Aider commands and filenames.
+    
+    This class provides intelligent auto-completion for:
+    - Command names and arguments
+    - File paths in the project
+    - Read-only file paths
+    - Context-aware suggestions based on current state
+    
+    Attributes:
+        addable_rel_fnames: Files that can be added to the chat
+        rel_fnames: Files currently in the chat
+        encoding: File encoding for reading operations
+        abs_read_only_fnames: Absolute paths of read-only files
+    """
     def __init__(
         self, root, rel_fnames, addable_rel_fnames, commands, encoding, abs_read_only_fnames=None
     ):
+        """
+        Initialize the auto-completer.
+        
+        Args:
+            root: Root directory of the project
+            rel_fnames: Relative filenames currently in chat
+            addable_rel_fnames: Files that can be added to chat
+            commands: Available commands for completion
+            encoding: File encoding
+            abs_read_only_fnames: Absolute paths of read-only files
+        """
         self.addable_rel_fnames = addable_rel_fnames
         self.rel_fnames = rel_fnames
         self.encoding = encoding
@@ -228,6 +317,27 @@ class AutoCompleter(Completer):
 
 
 class InputOutput:
+    """
+    Central I/O handler for the Aider AI coding assistant.
+    
+    This class manages all input/output operations including:
+    - User input handling with auto-completion
+    - AI response display with markdown rendering
+    - Tool output formatting (errors, warnings, info)
+    - File I/O operations with encoding support
+    - Command history and persistence
+    - Rich terminal UI with syntax highlighting
+    
+    Class Attributes:
+        num_error_outputs: Counter for error messages displayed
+        num_user_asks: Counter for user questions/requests
+        clipboard_watcher: Background clipboard monitoring thread
+        bell_on_next_input: Flag to ring bell on next input
+        notifications_command: Command to run for notifications
+        
+    The InputOutput class provides the main interface between the user
+    and the AI assistant, handling all display and interaction logic.
+    """
     num_error_outputs = 0
     num_user_asks = 0
     clipboard_watcher = None
@@ -529,9 +639,30 @@ class InputOutput:
         abs_read_only_fnames=None,
         edit_format=None,
     ):
+        """
+        Get user input from the terminal with auto-completion support.
+        
+        This method displays the input prompt and handles user input with:
+        - File path auto-completion
+        - Command auto-completion
+        - Multi-line input support
+        - Command history
+        - Rich terminal formatting
+        
+        Args:
+            root: Root directory of the project
+            rel_fnames: Relative filenames currently in chat
+            addable_rel_fnames: Files that can be added to chat
+            commands: Available commands for completion
+            abs_read_only_fnames: Absolute paths of read-only files
+            edit_format: Current edit format for the coder
+            
+        Returns:
+            str: User input from the terminal
+        """
         self.rule()
 
-        # Ring the bell if needed
+        # Ring the bell if needed (notification)
         self.ring_bell()
 
         rel_fnames = list(rel_fnames)
@@ -745,6 +876,15 @@ class InputOutput:
             self.tool_warning(f"Unable to write to input history file: {err}")
 
     def get_input_history(self):
+        """
+        Load and return the input command history.
+        
+        This method loads the command history from the history file,
+        providing access to previously entered commands for history navigation.
+        
+        Returns:
+            list: List of command strings from history, or empty list if no history file
+        """
         if not self.input_history_file:
             return []
 
@@ -752,6 +892,16 @@ class InputOutput:
         return fh.load_history_strings()
 
     def log_llm_history(self, role, content):
+        """
+        Log LLM conversation history to file for debugging and analysis.
+        
+        This method writes LLM conversation entries (user messages and AI responses)
+        to a history file with timestamps for debugging and analysis purposes.
+        
+        Args:
+            role (str): Role of the message sender (user, assistant, system, etc.)
+            content (str): Content of the message
+        """
         if not self.llm_history_file:
             return
         timestamp = datetime.now().isoformat(timespec="seconds")
@@ -986,13 +1136,49 @@ class InputOutput:
             self.console.print(message, **style)
 
     def tool_error(self, message="", strip=True):
+        """
+        Display error messages to the user with error formatting.
+        
+        This method formats and displays error messages with the configured
+        error color and increments the error counter for tracking.
+        
+        Args:
+            message (str): Error message to display
+            strip (bool): Whether to strip whitespace from the message
+        """
         self.num_error_outputs += 1
         self._tool_message(message, strip, self.tool_error_color)
 
     def tool_warning(self, message="", strip=True):
+        """
+        Display warning messages to the user with warning formatting.
+        
+        This method formats and displays warning messages with the configured
+        warning color.
+        
+        Args:
+            message (str): Warning message to display
+            strip (bool): Whether to strip whitespace from the message
+        """
         self._tool_message(message, strip, self.tool_warning_color)
 
     def tool_output(self, *messages, log_only=False, bold=False):
+        """
+        Display tool output messages to the user.
+        
+        This method formats and displays output from tools (commands, operations, etc.).
+        Messages can be logged only (to chat history) or displayed to the user.
+        
+        Args:
+            *messages: Variable number of message strings to display
+            log_only: If True, only log to chat history without displaying
+            bold: If True, display message in bold text
+            
+        Behavior:
+            - Messages are joined with spaces
+            - Added to chat history for context
+            - Formatted with tool_output_color if pretty mode is enabled
+        """
         if messages:
             hist = " ".join(messages)
             hist = f"{hist.strip()}"
@@ -1001,15 +1187,73 @@ class InputOutput:
         if log_only:
             return
 
-        messages = list(map(Text, messages))
-        style = dict()
-        if self.pretty:
-            if self.tool_output_color:
-                style["color"] = ensure_hash_prefix(self.tool_output_color)
-            style["reverse"] = bold
+        if messages:
+            message = " ".join(messages)
+        else:
+            message = ""
 
-        style = RichStyle(**style)
-        self.console.print(*messages, style=style)
+        if not isinstance(message, Text):
+            message = Text(message)
+
+        if bold:
+            message = Text(message, style="bold")
+
+        if self.pretty and self.tool_output_color:
+            style = dict(style=self.tool_output_color)
+        else:
+            style = dict()
+
+        try:
+            self.console.print(message, **style)
+        except UnicodeEncodeError:
+            # Fallback to ASCII-safe output
+            if isinstance(message, Text):
+                message = message.plain
+            message = str(message).encode("ascii", errors="replace").decode("ascii")
+            self.console.print(message, **style)
+
+    def tool_command(self, command, output=None):
+        """Display a command being executed and its output."""
+        # Add visual styling for command display
+        if self.pretty:
+            # Use a cyan color for commands
+            cmd_text = Text(f"▶ {command}", style="cyan bold")
+            self.console.print(cmd_text)
+        else:
+            self.tool_output(f"$ {command}", log_only=False)
+        
+        if output:
+            # Indent the output for better readability
+            if self.pretty:
+                output_lines = output.split('\n')
+                for line in output_lines:
+                    if line.strip():
+                        self.console.print(Text(f"  {line}", style="dim"))
+                    else:
+                        self.console.print("")
+            else:
+                self.tool_output(output, log_only=False)
+
+    def tool_progress(self, message, progress=None):
+        """Display a progress indicator."""
+        if not self.pretty:
+            self.tool_output(message, log_only=False)
+            return
+        
+        if progress is not None:
+            # Create a progress bar
+            bar_length = 30
+            filled = int(bar_length * progress)
+            bar = "█" * filled + "░" * (bar_length - filled)
+            progress_text = Text(f"⏳ {message} [{bar}] {progress*100:.0f}%", style="yellow")
+            self.console.print(progress_text)
+        else:
+            # Just show the message with a spinner
+            spinner = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+            import time
+            idx = int(time.time() * 10) % len(spinner)
+            progress_text = Text(f"{spinner[idx]} {message}", style="yellow")
+            self.console.print(progress_text)
 
     def get_assistant_mdstream(self):
         mdargs = dict(
@@ -1115,6 +1359,19 @@ class InputOutput:
             )
 
     def append_chat_history(self, text, linebreak=False, blockquote=False, strip=True):
+        """
+        Append text to the chat history file for persistence.
+        
+        This method writes chat messages to the history file with appropriate
+        formatting for markdown rendering. Supports line breaks, blockquotes,
+        and whitespace stripping.
+        
+        Args:
+            text (str): Text to append to chat history
+            linebreak (bool): Add markdown line break (two spaces + newline)
+            blockquote (bool): Format as markdown blockquote (prefix with "> ")
+            strip (bool): Strip whitespace from text
+        """
         if blockquote:
             if strip:
                 text = text.strip()

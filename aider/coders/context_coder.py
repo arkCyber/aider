@@ -1,3 +1,16 @@
+"""
+Context Coder Module
+
+This module implements the Context Coder, which identifies which files need to be
+edited for a given request. It uses repository mapping to understand the codebase
+structure and identify relevant files.
+
+Key Features:
+- File identification for editing
+- Repository context understanding
+- Map-based file selection
+"""
+
 from .base_coder import Coder
 from .context_prompts import ContextPrompts
 

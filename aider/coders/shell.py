@@ -1,3 +1,16 @@
+"""
+Shell Module
+
+This module provides shell command suggestion functionality for the Aider AI coding
+assistant. It generates prompts for suggesting shell commands that users might want
+to run based on their code changes.
+
+Key Features:
+- Shell command suggestion prompts
+- Platform-aware command generation
+- OS-specific command formatting
+"""
+
 shell_cmd_prompt = """
 4. *Concisely* suggest any shell commands the user might want to run in ```bash blocks.
 

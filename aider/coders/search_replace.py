@@ -1,4 +1,17 @@
 #!/usr/bin/env python
+"""
+Search and Replace Module
+
+This module provides search and replace functionality for code modifications.
+It implements flexible text matching and replacement algorithms using diff-match-patch
+and other techniques.
+
+Key Features:
+- Flexible search and replace
+- Diff-based modifications
+- Text matching algorithms
+- Indentation handling
+"""
 
 import sys
 from pathlib import Path

@@ -1,3 +1,18 @@
+"""
+Models Module
+
+This module provides AI model management and configuration for the Aider AI coding
+assistant. It handles model selection, token management, cost tracking, and model
+metadata.
+
+Key Features:
+- AI model configuration
+- Token management and pricing
+- Model metadata and capabilities
+- Context window management
+- Model switching support
+"""
+
 import difflib
 import hashlib
 import importlib.resources

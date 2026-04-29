@@ -1,3 +1,16 @@
+"""
+Exceptions Module
+
+This module provides exception information and handling for the Aider AI coding
+assistant. It defines exceptions that can occur during AI model interactions and
+provides information about whether they should be retried.
+
+Key Features:
+- Exception classification (retryable vs non-retryable)
+- Exception descriptions
+- LiteLLM exception handling
+"""
+
 from dataclasses import dataclass
 
 from aider.dump import dump  # noqa: F401

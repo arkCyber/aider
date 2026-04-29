@@ -1,3 +1,17 @@
+"""
+Edit Block Coder Module
+
+This module implements the Edit Block Coder, which uses search/replace blocks
+for code modifications. The coder identifies specific code blocks and applies
+edits using diff-style formatting.
+
+Key Features:
+- Search/replace block editing
+- Diff-style formatting
+- Precise code block identification
+- Multiple edit support
+"""
+
 import difflib
 import math
 import re

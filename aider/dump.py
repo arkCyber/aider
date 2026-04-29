@@ -1,3 +1,16 @@
+"""
+Dump Module
+
+This module provides debugging utilities for the Aider AI coding assistant.
+It includes a dump function for printing variable values with their names
+during debugging.
+
+Key Features:
+- Variable value dumping
+- Debugging utilities
+- Stack trace extraction
+"""
+
 import json
 import traceback
 

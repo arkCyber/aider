@@ -1,3 +1,17 @@
+"""
+Edit Block Function Coder Module
+
+This module implements the Edit Block Function Coder, which uses function-based
+editing for code modifications. It provides AI functions for replacing lines in
+files with structured editing capabilities.
+
+Key Features:
+- Function-based editing
+- AI function calling
+- Structured replace operations
+- Multi-file editing support
+"""
+
 import json
 
 from ..dump import dump  # noqa: F401
@@ -89,8 +103,33 @@ class EditBlockFunctionCoder(Coder):
             return self.partial_response_content
 
         args = self.parse_partial_args()
-        res = json.dumps(args, indent=4)
-        return res
+        
+        # Format the response to show planning content with visual indicator
+        explanation = args.get("explanation") if args else None
+        edits = args.get("edits", []) if args else []
+        
+        if explanation or edits:
+            res = ""
+            if explanation:
+                # Add visual indicator for planning content
+                res += "📋 **Plan:**\n\n"
+                res += f"{explanation}\n\n"
+            
+            # Show edits in a readable format
+            if edits:
+                res += "**Edits to make:**\n\n"
+                for i, edit in enumerate(edits, 1):
+                    path = edit.get("path", "unknown")
+                    original_lines = edit.get("original_lines", [])
+                    updated_lines = edit.get("updated_lines", [])
+                    res += f"{i}. `{path}`\n"
+                    if original_lines:
+                        res += f"   - Replace {len(original_lines)} line(s)\n"
+                    res += "\n"
+            
+            return res
+        
+        return json.dumps(args, indent=4)
 
     def _update_files(self):
         name = self.partial_response_function_call.get("name")

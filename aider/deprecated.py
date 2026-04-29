@@ -1,3 +1,16 @@
+"""
+Deprecated Module
+
+This module provides deprecated argument handling for the Aider AI coding assistant.
+It adds deprecated model shortcut arguments to the argument parser for backward
+compatibility.
+
+Key Features:
+- Deprecated model shortcuts
+- Backward compatibility
+- Argument parser extensions
+"""
+
 def add_deprecated_model_args(parser, group):
     """Add deprecated model shortcut arguments to the argparse parser."""
     opus_model = "claude-3-opus-20240229"

@@ -1,3 +1,17 @@
+"""
+Whole File Function Coder Module
+
+This module implements the Whole File Function Coder, which uses function-based
+editing for entire file modifications. It provides AI functions for writing files
+with structured editing capabilities.
+
+Key Features:
+- Function-based whole file editing
+- AI function calling
+- Multi-file editing support
+- File content replacement
+"""
+
 from aider import diffs
 
 from ..dump import dump  # noqa: F401
@@ -71,6 +85,8 @@ class WholeFileFunctionCoder(Coder):
 
         res = ""
         if explanation:
+            # Add visual indicator for planning content
+            res += "📋 **Plan:**\n\n"
             res += f"{explanation}\n\n"
 
         for i, file_upd in enumerate(files):

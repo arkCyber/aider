@@ -1,3 +1,17 @@
+"""
+Linter Module
+
+This module provides code linting functionality for the Aider AI coding assistant.
+It handles running linters on files to check for code quality issues and style
+violations.
+
+Key Features:
+- Code linting
+- Multiple linter support
+- AST-based analysis
+- Error reporting
+"""
+
 import os
 import re
 import subprocess
@@ -19,9 +33,10 @@ warnings.simplefilter("ignore", category=FutureWarning)
 
 
 class Linter:
-    def __init__(self, encoding="utf-8", root=None):
+    def __init__(self, encoding="utf-8", root=None, io=None):
         self.encoding = encoding
         self.root = root
+        self.io = io
 
         self.languages = dict(
             python=self.py_lint,
@@ -54,6 +69,7 @@ class Linter:
                 cmd,
                 cwd=self.root,
                 encoding=self.encoding,
+                io=self.io,
             )
         except OSError as err:
             print(f"Unable to execute lint command: {err}")
@@ -146,6 +162,10 @@ class Linter:
         ]
 
         text = f"## Running: {' '.join(flake8_cmd)}\n\n"
+
+        # Display command if io is available
+        if self.io and hasattr(self.io, 'tool_command'):
+            self.io.tool_command(' '.join(flake8_cmd))
 
         try:
             result = subprocess.run(

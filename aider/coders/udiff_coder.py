@@ -1,3 +1,17 @@
+"""
+Unified Diff Coder Module
+
+This module implements the Unified Diff Coder, which uses unified diff format
+for code modifications. This approach provides a standard diff format that is
+widely used in version control systems.
+
+Key Features:
+- Unified diff format editing
+- Hunk-based modifications
+- Standard patch application
+- Search and replace functionality
+"""
+
 import difflib
 from itertools import groupby
 from pathlib import Path

@@ -1,3 +1,17 @@
+"""
+History Module
+
+This module provides chat history summarization and management for the Aider AI
+coding assistant. It handles token counting, message summarization, and context
+window management.
+
+Key Features:
+- Chat history summarization
+- Token counting
+- Context window management
+- Message size optimization
+"""
+
 import argparse
 
 from aider import models, prompts

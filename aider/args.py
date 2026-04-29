@@ -1,4 +1,18 @@
 #!/usr/bin/env python
+"""
+Arguments Module
+
+This module provides argument parsing and configuration management for the Aider
+AI coding assistant. It handles command-line arguments, environment variables,
+and configuration file parsing.
+
+Key Features:
+- Command-line argument parsing
+- Environment variable support
+- Configuration file handling (.env, .aider.conf.yml)
+- Help text formatting (Markdown, YAML)
+- Deprecated argument handling
+"""
 
 import argparse
 import os

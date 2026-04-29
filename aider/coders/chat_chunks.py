@@ -1,3 +1,16 @@
+"""
+Chat Chunks Module
+
+This module provides data structures for organizing chat message chunks.
+It separates different types of messages (system, examples, done, repo, etc.)
+for structured conversation management.
+
+Key Features:
+- Chat message organization
+- Message categorization
+- Structured conversation flow
+"""
+
 from dataclasses import dataclass, field
 from typing import List
 

@@ -1,3 +1,16 @@
+"""
+Copy-Paste Module
+
+This module provides clipboard watching functionality for the Aider AI coding
+assistant. It monitors the system clipboard for changes and updates the IO
+placeholder with clipboard content.
+
+Key Features:
+- Clipboard monitoring
+- Thread-based watching
+- IO placeholder updates
+"""
+
 import threading
 import time
 

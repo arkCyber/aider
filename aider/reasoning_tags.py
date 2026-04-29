@@ -44,6 +44,7 @@ def replace_reasoning_tags(text, tag_name):
     """
     Replace opening and closing reasoning tags with standard formatting.
     Ensures exactly one blank line before START and END markers.
+    Handles partial tags for streaming display.
 
     Args:
         text (str): The text containing the tags
@@ -61,6 +62,42 @@ def replace_reasoning_tags(text, tag_name):
     # Replace closing tag with proper spacing
     text = re.sub(f"\\s*</{tag_name}>\\s*", f"\n\n{REASONING_END}\n\n", text)
 
+    return text
+
+
+def replace_reasoning_tags_streaming(text, tag_name, got_reasoning, ended_reasoning):
+    """
+    Replace reasoning tags for streaming display.
+    Handles partial tags to show reasoning content in real-time.
+
+    Args:
+        text (str): The text containing the tags
+        tag_name (str): The name of the tag to replace
+        got_reasoning (bool): Whether reasoning content has started
+        ended_reasoning (bool): Whether reasoning content has ended
+
+    Returns:
+        str: Text with reasoning tags replaced for streaming display
+    """
+    if not text:
+        return text
+
+    # Replace opening tag with proper spacing
+    if f"<{tag_name}>" in text:
+        text = re.sub(f"\\s*<{tag_name}>\\s*", f"\n{REASONING_START}\n\n", text)
+
+    # Replace closing tag with proper spacing
+    if f"</{tag_name}>" in text:
+        text = re.sub(f"\\s*</{tag_name}>\\s*", f"\n\n{REASONING_END}\n\n", text)
+
+    # If we have reasoning content but no closing tag yet, add a visual indicator
+    if got_reasoning and not ended_reasoning and f"</{tag_name}>" not in text:
+        # Check if we have the opening tag already
+        if REASONING_START in text and REASONING_END not in text:
+            # Add a visual indicator that reasoning is in progress
+            if not text.rstrip().endswith("..."):
+                text = text.rstrip() + "..."
+    
     return text
 
 

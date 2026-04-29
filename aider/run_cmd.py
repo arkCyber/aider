@@ -1,3 +1,22 @@
+"""
+Aider Run Command Module
+
+This module provides utilities for running shell commands with proper
+output capture, error handling, and cross-platform compatibility.
+
+Key Features:
+- Cross-platform command execution (Windows, Linux, macOS)
+- Real-time output streaming
+- Interactive command support using pexpect
+- Subprocess fallback for non-interactive environments
+- Error handling and status code reporting
+- Parent process detection for shell selection
+
+The module provides two main execution methods:
+- run_cmd_pexpect: Interactive execution with pexpect (Unix-like systems)
+- run_cmd_subprocess: Non-interactive execution with subprocess (fallback)
+"""
+
 import os
 import platform
 import subprocess
@@ -8,12 +27,33 @@ import pexpect
 import psutil
 
 
-def run_cmd(command, verbose=False, error_print=None, cwd=None):
+def run_cmd(command, verbose=False, error_print=None, cwd=None, io=None):
+    """
+    Execute a shell command with appropriate method based on environment.
+    
+    This function automatically selects the best execution method based on:
+    - Terminal type (TTY vs non-TTY)
+    - Operating system (Windows vs Unix-like)
+    - Available libraries (pexpect availability)
+    
+    Args:
+        command (str): Shell command to execute
+        verbose (bool): Enable verbose output for debugging
+        error_print (callable): Custom error print function
+        cwd (str): Working directory for command execution
+        io: IO object for command display
+        
+    Returns:
+        tuple: (exit_code, output) where exit_code is the process return code
+               and output is the captured command output
+    """
     try:
+        # Use pexpect for interactive execution on Unix-like systems with TTY
         if sys.stdin.isatty() and hasattr(pexpect, "spawn") and platform.system() != "Windows":
-            return run_cmd_pexpect(command, verbose, cwd)
+            return run_cmd_pexpect(command, verbose, cwd, io)
 
-        return run_cmd_subprocess(command, verbose, cwd)
+        # Fallback to subprocess for Windows or non-TTY environments
+        return run_cmd_subprocess(command, verbose, cwd, io)
     except OSError as e:
         error_message = f"Error occurred while running command '{command}': {str(e)}"
         if error_print is None:
@@ -24,6 +64,17 @@ def run_cmd(command, verbose=False, error_print=None, cwd=None):
 
 
 def get_windows_parent_process_name():
+    """
+    Detect the parent process name on Windows for shell selection.
+    
+    This function walks up the process tree to find if the current
+    process is running under PowerShell or cmd.exe, which helps
+    determine the appropriate shell for command execution.
+    
+    Returns:
+        str or None: Parent process name if found (powershell.exe or cmd.exe),
+                     None otherwise
+    """
     try:
         current_process = psutil.Process()
         while True:
@@ -39,7 +90,25 @@ def get_windows_parent_process_name():
         return None
 
 
-def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.encoding):
+def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.encoding, io=None):
+    """
+    Run a shell command using subprocess with real-time output streaming.
+    
+    This method uses Python's subprocess module to execute commands
+    with real-time output streaming. It handles shell selection for
+    Windows systems and provides unbuffered output.
+    
+    Args:
+        command (str): Shell command to execute
+        verbose (bool): Enable verbose output for debugging
+        cwd (str): Working directory for command execution
+        encoding (str): Character encoding for output
+        io: IO object for command display
+        
+    Returns:
+        tuple: (exit_code, output) where exit_code is the process return code
+               and output is the captured command output
+    """
     if verbose:
         print("Using run_cmd_subprocess:", command)
 
@@ -47,7 +116,7 @@ def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.enc
         shell = os.environ.get("SHELL", "/bin/sh")
         parent_process = None
 
-        # Determine the appropriate shell
+        # Determine the appropriate shell for Windows
         if platform.system() == "Windows":
             parent_process = get_windows_parent_process_name()
             if parent_process == "powershell.exe":
@@ -59,6 +128,11 @@ def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.enc
             if platform.system() == "Windows":
                 print("Parent process:", parent_process)
 
+        # Display command if io is available
+        if io and hasattr(io, 'tool_command'):
+            io.tool_command(command)
+
+        # Execute command with real-time output streaming
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -72,6 +146,7 @@ def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.enc
             cwd=cwd,
         )
 
+        # Stream output in real-time
         output = []
         while True:
             chunk = process.stdout.read(1)
@@ -86,20 +161,44 @@ def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.enc
         return 1, str(e)
 
 
-def run_cmd_pexpect(command, verbose=False, cwd=None):
+def run_cmd_pexpect(command, verbose=False, cwd=None, io=None):
     """
     Run a shell command interactively using pexpect, capturing all output.
 
-    :param command: The command to run as a string.
-    :param verbose: If True, print output in real-time.
-    :return: A tuple containing (exit_status, output)
+    This method provides interactive command execution with proper
+    terminal emulation, allowing for commands that require user
+    input or interactive prompts. It uses the pexpect library
+    for cross-platform interactive shell execution.
+
+    Args:
+        command (str): The command to run as a string
+        verbose (bool): If True, print output in real-time for debugging
+        cwd (str): Working directory for command execution
+        io: IO object for displaying commands
+
+    Returns:
+        tuple: (exit_status, output) where exit_status is the process exit code
+               and output is the captured command output as a string
     """
     if verbose:
         print("Using run_cmd_pexpect:", command)
 
+    # Display command if io is available
+    if io and hasattr(io, 'tool_command'):
+        io.tool_command(command)
+
     output = BytesIO()
 
     def output_callback(b):
+        """
+        Callback function to capture pexpect output.
+        
+        Args:
+            b: Bytes output from pexpect
+            
+        Returns:
+            bytes: The input bytes for filtering
+        """
         output.write(b)
         return b
 

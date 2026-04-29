@@ -1,3 +1,17 @@
+"""
+Analytics Module
+
+This module provides analytics and usage tracking functionality for the Aider
+AI coding assistant. It handles event tracking, user statistics, and anonymous
+usage data collection for product improvement.
+
+Key Features:
+- Event tracking and reporting
+- User statistics collection
+- Anonymous usage data
+- Platform and version tracking
+"""
+
 import json
 import platform
 import sys

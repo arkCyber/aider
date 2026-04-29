@@ -1,3 +1,18 @@
+"""
+Utilities Module
+
+This module provides utility functions and helper classes for the Aider AI coding
+assistant. It includes file operations, platform detection, and various helper
+functions used throughout the codebase.
+
+Key Features:
+- File and directory operations
+- Platform detection
+- Image file handling
+- Temporary directory management
+- Spinner for long-running operations
+"""
+
 import os
 import platform
 import subprocess

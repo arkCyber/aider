@@ -1,3 +1,18 @@
+"""
+Repository Module
+
+This module provides Git repository integration and management for the Aider AI
+coding assistant. It handles repository operations, file tracking, and git-specific
+functionality.
+
+Key Features:
+- Git repository management
+- File tracking and status
+- Commit operations
+- Gitignore handling
+- Repository error handling
+"""
+
 import contextlib
 import os
 import time

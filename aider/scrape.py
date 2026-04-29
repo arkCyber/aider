@@ -1,4 +1,17 @@
 #!/usr/bin/env python
+"""
+Scrape Module
+
+This module provides web scraping functionality for the Aider AI coding assistant.
+It handles fetching documentation from URLs and converting it to markdown format
+for inclusion in the AI context.
+
+Key Features:
+- Web scraping with Playwright
+- Markdown conversion
+- Documentation fetching
+- URL content extraction
+"""
 
 import re
 import sys
@@ -14,7 +27,7 @@ aider_user_agent = f"Aider/{__version__} +{urls.website}"
 # platforms.
 
 
-def check_env():
+def check_engine():
     try:
         from playwright.sync_api import sync_playwright
 
@@ -94,6 +107,186 @@ class Scraper:
 
         self.playwright_available = playwright_available
         self.verify_ssl = verify_ssl
+        self.browser = None
+        self.context = None
+        self.page = None
+
+
+class BrowserController:
+    """Control browser interactions for web automation."""
+    
+    def __init__(self, print_error=None, verify_ssl=True, headless=True):
+        """
+        `print_error` - a function to call to print error/debug info.
+        `verify_ssl` - if False, disable SSL certificate verification.
+        `headless` - if True, run browser in headless mode.
+        """
+        if print_error:
+            self.print_error = print_error
+        else:
+            self.print_error = print
+        
+        self.verify_ssl = verify_ssl
+        self.headless = headless
+        self.browser = None
+        self.context = None
+        self.page = None
+        self.playwright = None
+    
+    def start(self):
+        """Start the browser session."""
+        try:
+            from playwright.sync_api import sync_playwright
+            self.playwright = sync_playwright().start()
+            self.browser = self.playwright.chromium.launch(headless=self.headless)
+            self.context = self.browser.new_context(ignore_https_errors=not self.verify_ssl)
+            self.page = self.context.new_page()
+            return True
+        except Exception as e:
+            self.print_error(f"Failed to start browser: {e}")
+            return False
+    
+    def stop(self):
+        """Stop the browser session."""
+        try:
+            if self.page:
+                self.page.close()
+                self.page = None
+            if self.context:
+                self.context.close()
+                self.context = None
+            if self.browser:
+                self.browser.close()
+                self.browser = None
+            if self.playwright:
+                self.playwright.stop()
+                self.playwright = None
+            return True
+        except Exception as e:
+            self.print_error(f"Failed to stop browser: {e}")
+            return False
+    
+    def navigate(self, url):
+        """Navigate to a URL."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return False
+        
+        try:
+            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+            self.page.goto(url, wait_until="networkidle", timeout=10000)
+            return True
+        except PlaywrightTimeoutError:
+            self.print_error(f"Page load timeout: {url}")
+            return False
+        except Exception as e:
+            self.print_error(f"Failed to navigate to {url}: {e}")
+            return False
+    
+    def click(self, selector):
+        """Click an element by selector."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return False
+        
+        try:
+            self.page.click(selector)
+            return True
+        except Exception as e:
+            self.print_error(f"Failed to click {selector}: {e}")
+            return False
+    
+    def fill(self, selector, text):
+        """Fill a form field."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return False
+        
+        try:
+            self.page.fill(selector, text)
+            return True
+        except Exception as e:
+            self.print_error(f"Failed to fill {selector}: {e}")
+            return False
+    
+    def select(self, selector, value):
+        """Select an option from a dropdown."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return False
+        
+        try:
+            self.page.select_option(selector, value)
+            return True
+        except Exception as e:
+            self.print_error(f"Failed to select {selector}: {e}")
+            return False
+    
+    def execute_script(self, script):
+        """Execute JavaScript in the page."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return None
+        
+        try:
+            return self.page.evaluate(script)
+        except Exception as e:
+            self.print_error(f"Failed to execute script: {e}")
+            return None
+    
+    def get_content(self):
+        """Get the current page content as HTML."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return None
+        
+        try:
+            return self.page.content()
+        except Exception as e:
+            self.print_error(f"Failed to get content: {e}")
+            return None
+    
+    def get_text(self):
+        """Get the current page text content."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return None
+        
+        try:
+            return self.page.inner_text("body")
+        except Exception as e:
+            self.print_error(f"Failed to get text: {e}")
+            return None
+    
+    def screenshot(self, path=None):
+        """Take a screenshot of the current page."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return False
+        
+        try:
+            self.page.screenshot(path=path)
+            return True
+        except Exception as e:
+            self.print_error(f"Failed to take screenshot: {e}")
+            return False
+    
+    def wait(self, timeout=5000):
+        """Wait for the page to settle."""
+        if not self.page:
+            self.print_error("Browser not started. Call start() first.")
+            return False
+        
+        try:
+            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+            self.page.wait_for_load_state("networkidle", timeout=timeout)
+            return True
+        except PlaywrightTimeoutError:
+            self.print_error("Page load timeout")
+            return False
+        except Exception as e:
+            self.print_error(f"Failed to wait: {e}")
+            return False
 
     def scrape(self, url):
         """

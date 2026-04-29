@@ -1,3 +1,15 @@
+"""
+Architect Coder Module
+
+This module implements the Architect Coder, which provides a two-phase workflow
+for code generation:
+1. Planning phase: Analyze the codebase and generate a plan
+2. Execution phase: Apply the plan to edit files
+
+The Architect Coder separates planning from execution, allowing users to review
+the plan before making changes to the codebase.
+"""
+
 from .architect_prompts import ArchitectPrompts
 from .ask_coder import AskCoder
 from .base_coder import Coder
@@ -13,6 +25,10 @@ class ArchitectCoder(AskCoder):
 
         if not content or not content.strip():
             return
+
+        # Show visual indicator that this is the planning phase
+        if self.io.pretty:
+            self.io.tool_output("\n📋 Planning phase complete", log_only=False)
 
         if not self.auto_accept_architect and not self.io.confirm_ask("Edit the files?"):
             return

@@ -1,5 +1,19 @@
 # flake8: noqa: E501
 
+"""
+Prompts Module
+
+This module provides system prompts and message templates for the Aider AI coding
+assistant. It contains various prompt templates for different operations like
+commit messages, code generation, and chat interactions.
+
+Key Features:
+- System prompt templates
+- Commit message generation prompts
+- Code generation prompts
+- Chat interaction prompts
+- Language-specific instructions
+"""
 
 # COMMIT
 

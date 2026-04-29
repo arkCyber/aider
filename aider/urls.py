@@ -1,3 +1,17 @@
+"""
+URLs Module
+
+This module provides URL constants for the Aider AI coding assistant documentation
+and resources. It contains links to documentation pages, GitHub issues, and other
+online resources.
+
+Key Features:
+- Documentation URLs
+- GitHub issue links
+- Troubleshooting resources
+- Release notes links
+"""
+
 website = "https://aider.chat/"
 add_all_files = "https://aider.chat/docs/faq.html#how-can-i-add-all-the-files-to-the-chat"
 edit_errors = "https://aider.chat/docs/troubleshooting/edit-errors.html"

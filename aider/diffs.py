@@ -1,3 +1,15 @@
+"""
+Diffs Module
+
+This module provides diff generation and comparison utilities for file changes.
+It handles the creation and display of diffs between file versions.
+
+Key Features:
+- File diff generation
+- Line-by-line comparison
+- Diff formatting and display
+"""
+
 import difflib
 import sys
 

@@ -1,3 +1,17 @@
+"""
+Voice Module
+
+This module provides voice input functionality for the Aider AI coding assistant.
+It handles audio recording, transcription, and conversion of voice input to text
+using speech recognition APIs.
+
+Key Features:
+- Voice input recording
+- Audio transcription
+- Speech-to-text conversion
+- Audio file handling
+"""
+
 import math
 import os
 import queue

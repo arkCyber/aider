@@ -1,3 +1,10 @@
+"""
+Aider Package Initialization
+
+This module initializes the Aider AI coding assistant package and handles
+version information management.
+"""
+
 from packaging import version
 
 __version__ = "0.86.3.dev"

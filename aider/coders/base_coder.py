@@ -1,4 +1,24 @@
 #!/usr/bin/env python
+"""
+Aider Base Coder Module
+
+This module provides the base implementation for the Aider AI coding assistant.
+It serves as the foundation for all coder implementations, handling file management,
+AI model interaction, command processing, and git repository operations.
+
+Key Features:
+- File management and editing with multiple edit formats
+- AI model interaction with context window management
+- Git repository integration and commit handling
+- Command processing and execution
+- Chat history and conversation management
+- Code linting and validation
+- Repository mapping for context understanding
+- Aerospace-level error handling and logging
+
+The Coder class is the core component that coordinates between the user,
+the AI model, and the codebase to provide intelligent coding assistance.
+"""
 
 import base64
 import hashlib
@@ -42,6 +62,7 @@ from aider.reasoning_tags import (
     format_reasoning_content,
     remove_reasoning_content,
     replace_reasoning_tags,
+    replace_reasoning_tags_streaming,
 )
 from aider.repo import ANY_GIT_ERROR, GitRepo
 from aider.repomap import RepoMap
@@ -54,6 +75,16 @@ from .chat_chunks import ChatChunks
 
 
 class UnknownEditFormat(ValueError):
+    """
+    Exception raised when an unknown edit format is specified.
+    
+    This exception is used to signal that the user has requested an edit format
+    that is not supported by the current coder implementation.
+    
+    Attributes:
+        edit_format: The unknown edit format that was requested
+        valid_formats: List of valid edit formats for this coder
+    """
     def __init__(self, edit_format, valid_formats):
         self.edit_format = edit_format
         self.valid_formats = valid_formats
@@ -63,17 +94,39 @@ class UnknownEditFormat(ValueError):
 
 
 class MissingAPIKeyError(ValueError):
+    """
+    Exception raised when an API key is missing for the configured model.
+    
+    This exception is used to signal that the user has not provided a required
+    API key for the AI model they are trying to use.
+    """
     pass
 
 
 class FinishReasonLength(Exception):
+    """
+    Exception raised when the AI response is too long.
+    
+    This exception is used to signal that the AI model's response exceeded
+    the allowed length limit, requiring special handling.
+    """
     pass
 
 
 def wrap_fence(name):
+    """
+    Create fence tags for code blocks.
+    
+    Args:
+        name (str): The name of the fence tag
+        
+    Returns:
+        tuple: (opening_tag, closing_tag) for the fence
+    """
     return f"<{name}>", f"</{name}>"
 
 
+# All supported fence tag formats for code block detection
 all_fences = [
     ("`" * 3, "`" * 3),
     ("`" * 4, "`" * 4),  # LLMs ignore and revert to triple-backtick, causing #2879
@@ -86,6 +139,30 @@ all_fences = [
 
 
 class Coder:
+    """
+    Base implementation for the Aider AI coding assistant.
+    
+    This class provides the core functionality for AI-assisted coding, including:
+    - File management and editing with multiple edit formats
+    - AI model interaction with context window management
+    - Git repository integration and commit handling
+    - Command processing and execution
+    - Chat history and conversation management
+    - Code linting and validation
+    
+    Class Attributes:
+        abs_fnames: Absolute paths of files in the chat
+        abs_read_only_fnames: Absolute paths of read-only files
+        repo: Git repository instance
+        last_aider_commit_hash: Hash of the last aider commit
+        aider_edited_files: Files edited by aider in current session
+        last_asked_for_commit_time: Timestamp of last commit request
+        repo_map: Repository map for context understanding
+        functions: Available AI functions/tools
+        num_exhausted_context_windows: Counter for context window exhaustion
+        num_malformed_responses: Counter for malformed AI responses
+        last_keyboard_interrupt: Last keyboard interrupt timestamp
+    """
     abs_fnames = None
     abs_read_only_fnames = None
     repo = None
@@ -206,16 +283,40 @@ class Coder:
 
     def get_announcements(self):
         lines = []
-        lines.append(f"Aider v{__version__}")
+        
+        # ASCII Art Banner
+        banner = r"""
+    ╔════════════════════════════════════════════════════════════╗
+    ║                                                              ║
+    ║   ███████╗██╗  ██╗██╗ ██████╗ ██████╗ ███████╗██████╗        ║
+    ║   ██╔════╝██║  ██║██║██╔════╝██╔═══██╗██╔════╝██╔══██╗       ║
+    ║   ███████╗███████║██║██║     ██║   ██║█████╗  ██████╔╝       ║
+    ║   ╚════██║██╔══██║██║██║     ██║   ██║██╔══╝  ██╔══██╗       ║
+    ║   ███████║██║  ██║██║╚██████╗╚██████╔╝███████╗██║  ██║       ║
+    ║   ╚══════╝╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝       ║
+    ║                                                              ║
+    ║                    AI Pair Programming                        ║
+    ║                                                              ║
+    ╚════════════════════════════════════════════════════════════╝
+"""
+        lines.append(banner)
+        lines.append(f"")
+        lines.append(f"  🚀 Aider v{__version__}")
+        lines.append(f"  ──────────────────────────────────────────────")
+
+        # Load CLAUDE.md if it exists (project memory)
+        claude_md_path = self.abs_root_path('CLAUDE.md')
+        if os.path.exists(claude_md_path):
+            lines.append(f"  📝 Loaded project instructions from CLAUDE.md")
 
         # Model
         main_model = self.main_model
         weak_model = main_model.weak_model
 
         if weak_model is not main_model:
-            prefix = "Main model"
+            prefix = "  🤖 Main model"
         else:
-            prefix = "Model"
+            prefix = "  🤖 Model"
 
         output = f"{prefix}: {main_model.name} with {self.edit_format} edit format"
 
@@ -238,13 +339,13 @@ class Coder:
 
         if self.edit_format == "architect":
             output = (
-                f"Editor model: {main_model.editor_model.name} with"
+                f"  ✏️  Editor model: {main_model.editor_model.name} with"
                 f" {main_model.editor_edit_format} edit format"
             )
             lines.append(output)
 
         if weak_model is not main_model:
-            output = f"Weak model: {weak_model.name}"
+            output = f"  🧠 Weak model: {weak_model.name}"
             lines.append(output)
 
         # Repo
@@ -252,45 +353,45 @@ class Coder:
             rel_repo_dir = self.repo.get_rel_repo_dir()
             num_files = len(self.repo.get_tracked_files())
 
-            lines.append(f"Git repo: {rel_repo_dir} with {num_files:,} files")
+            lines.append(f"  📁 Git repo: {rel_repo_dir} with {num_files:,} files")
             if num_files > 1000:
                 lines.append(
-                    "Warning: For large repos, consider using --subtree-only and .aiderignore"
+                    "  ⚠️  Warning: For large repos, consider using --subtree-only and .aiderignore"
                 )
-                lines.append(f"See: {urls.large_repos}")
+                lines.append(f"     See: {urls.large_repos}")
         else:
-            lines.append("Git repo: none")
+            lines.append("  📁 Git repo: none")
 
         # Repo-map
         if self.repo_map:
             map_tokens = self.repo_map.max_map_tokens
             if map_tokens > 0:
                 refresh = self.repo_map.refresh
-                lines.append(f"Repo-map: using {map_tokens} tokens, {refresh} refresh")
+                lines.append(f"  🗺️  Repo-map: using {map_tokens} tokens, {refresh} refresh")
                 max_map_tokens = self.main_model.get_repo_map_tokens() * 2
                 if map_tokens > max_map_tokens:
                     lines.append(
-                        f"Warning: map-tokens > {max_map_tokens} is not recommended. Too much"
+                        f"  ⚠️  Warning: map-tokens > {max_map_tokens} is not recommended. Too much"
                         " irrelevant code can confuse LLMs."
                     )
             else:
-                lines.append("Repo-map: disabled because map_tokens == 0")
+                lines.append("  🗺️  Repo-map: disabled because map_tokens == 0")
         else:
-            lines.append("Repo-map: disabled")
+            lines.append("  🗺️  Repo-map: disabled")
 
         # Files
         for fname in self.get_inchat_relative_files():
-            lines.append(f"Added {fname} to the chat.")
+            lines.append(f"  ➕ Added {fname} to the chat.")
 
         for fname in self.abs_read_only_fnames:
             rel_fname = self.get_rel_fname(fname)
-            lines.append(f"Added {rel_fname} to the chat (read-only).")
+            lines.append(f"  👁️  Added {rel_fname} to the chat (read-only).")
 
         if self.done_messages:
-            lines.append("Restored previous conversation history.")
+            lines.append("  📜 Restored previous conversation history.")
 
         if self.io.multiline_mode:
-            lines.append("Multiline mode: Enabled. Enter inserts newline, Alt-Enter submits text")
+            lines.append("  ✏️  Multiline mode: Enabled. Enter inserts newline, Alt-Enter submits text")
 
         return lines
 
@@ -339,6 +440,55 @@ class Coder:
         auto_copy_context=False,
         auto_accept_architect=True,
     ):
+        """
+        Initialize the Coder with all necessary components for AI-assisted coding.
+        
+        This method sets up the core infrastructure for the AI coding assistant,
+        including file management, git integration, AI model configuration, and
+        command processing capabilities.
+        
+        Args:
+            main_model: The AI model to use for code generation
+            io: Input/output handler for user interaction
+            repo: Git repository instance
+            fnames: List of files to include in the chat
+            add_gitignore_files: Whether to add .gitignore files
+            read_only_fnames: List of read-only files
+            show_diffs: Whether to show code diffs
+            auto_commits: Whether to automatically commit changes
+            dirty_commits: Whether to allow commits with dirty working tree
+            dry_run: Whether to run in dry-run mode (no actual changes)
+            map_tokens: Number of tokens for repo map
+            verbose: Enable verbose output
+            stream: Enable streaming responses
+            use_git: Whether to use git integration
+            cur_messages: Current chat messages
+            done_messages: Completed chat messages
+            restore_chat_history: Whether to restore chat history
+            auto_lint: Whether to automatically lint code
+            auto_test: Whether to automatically run tests
+            lint_cmds: Custom lint commands
+            test_cmd: Custom test command
+            aider_commit_hashes: Set of aider commit hashes
+            map_mul_no_files: Multiplier for repo map with no files
+            commands: Commands instance
+            summarizer: Chat summarizer instance
+            total_cost: Total cost tracking
+            analytics: Analytics instance
+            map_refresh: Repo map refresh strategy
+            cache_prompts: Whether to cache prompts
+            num_cache_warming_pings: Number of cache warming pings
+            suggest_shell_commands: Whether to suggest shell commands
+            chat_language: Language for chat messages
+            commit_language: Language for commit messages
+            detect_urls: Whether to detect URLs in code
+            ignore_mentions: Set of mentions to ignore
+            total_tokens_sent: Total tokens sent to AI
+            total_tokens_received: Total tokens received from AI
+            file_watcher: File watcher instance
+            auto_copy_context: Whether to auto-copy context
+            auto_accept_architect: Whether to auto-accept architect suggestions
+        """
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
 
@@ -523,7 +673,7 @@ class Coder:
                 self.summarize_start()
 
         # Linting and testing
-        self.linter = Linter(root=self.root, encoding=io.encoding)
+        self.linter = Linter(root=self.root, encoding=io.encoding, io=io)
         self.auto_lint = auto_lint
         self.setup_lint_cmds(lint_cmds)
         self.lint_cmds = lint_cmds
@@ -549,9 +699,20 @@ class Coder:
 
     def show_announcements(self):
         bold = True
-        for line in self.get_announcements():
-            self.io.tool_output(line, bold=bold)
-            bold = False
+        lines = self.get_announcements()
+        for i, line in enumerate(lines):
+            # First line (banner) gets bold
+            if i == 0:
+                self.io.tool_output(line, bold=True)
+            # Version line gets bold
+            elif "Aider v" in line:
+                self.io.tool_output(line, bold=True)
+            # Separator line
+            elif "─" in line:
+                self.io.tool_output(line, bold=False)
+            # All other lines
+            else:
+                self.io.tool_output(line, bold=False)
 
     def add_rel_fname(self, rel_fname):
         self.abs_fnames.add(self.abs_root_path(rel_fname))
@@ -1935,6 +2096,9 @@ class Coder:
             if reasoning_content:
                 if not self.got_reasoning_content:
                     text += f"<{REASONING_TAG}>\n\n"
+                    # Show visual indicator that reasoning has started
+                    if self.show_pretty():
+                        self.io.tool_output("\n🧠 AI is thinking...", log_only=False)
                 text += reasoning_content
                 self.got_reasoning_content = True
                 received_content = True
@@ -1945,6 +2109,9 @@ class Coder:
                     if self.got_reasoning_content and not self.ended_reasoning_content:
                         text += f"\n\n</{self.reasoning_tag_name}>\n\n"
                         self.ended_reasoning_content = True
+                        # Show visual indicator that reasoning has ended
+                        if self.show_pretty():
+                            self.io.tool_output("✓ Thinking complete", log_only=False)
 
                     text += content
                     received_content = True
@@ -1976,8 +2143,13 @@ class Coder:
 
     def live_incremental_response(self, final):
         show_resp = self.render_incremental_response(final)
-        # Apply any reasoning tag formatting
-        show_resp = replace_reasoning_tags(show_resp, self.reasoning_tag_name)
+        # Apply any reasoning tag formatting with streaming support
+        show_resp = replace_reasoning_tags_streaming(
+            show_resp,
+            self.reasoning_tag_name,
+            self.got_reasoning_content,
+            self.ended_reasoning_content,
+        )
         self.mdstream.update(show_resp, final=final)
 
     def render_incremental_response(self, final):
@@ -2472,7 +2644,7 @@ class Coder:
             self.io.tool_output(f"Running {command}")
             # Add the command to input history
             self.io.add_to_input_history(f"/run {command.strip()}")
-            exit_status, output = run_cmd(command, error_print=self.io.tool_error, cwd=self.root)
+            exit_status, output = run_cmd(command, error_print=self.io.tool_error, cwd=self.root, io=self.io)
             if output:
                 accumulated_output += f"Output from {command}\n{output}\n"
 

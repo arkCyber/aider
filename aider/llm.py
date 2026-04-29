@@ -1,3 +1,17 @@
+"""
+LLM Module
+
+This module provides LLM (Large Language Model) integration and configuration
+for the Aider AI coding assistant. It handles LiteLLM initialization and
+configuration for various AI model providers.
+
+Key Features:
+- LiteLLM integration
+- Model provider configuration
+- Environment variable setup
+- Site URL and app name configuration
+"""
+
 import importlib
 import os
 import warnings
