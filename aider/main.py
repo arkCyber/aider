@@ -37,6 +37,14 @@ from aider.report import report_uncaught_exceptions
 from aider.versioncheck import check_version, install_from_main_branch, install_upgrade
 from aider.watch import FileWatcher
 
+# Enterprise features integration
+try:
+    from aider.integration import initialize_enterprise_features
+    _enterprise_features = initialize_enterprise_features()
+except Exception:
+    # Enterprise features are optional
+    _enterprise_features = None
+
 from .dump import dump  # noqa: F401
 
 
