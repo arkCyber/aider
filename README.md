@@ -9,14 +9,15 @@ AI Pair Programming in Your Terminal
 <p align="center">
   <img alt="Enhanced Documentation" src="https://img.shields.io/badge/Documentation-Enhanced-brightgreen?style=for-the-badge&logo=github&logoColor=white" />
   <img alt="Enterprise Features" src="https://img.shields.io/badge/Enterprise%20Features-Added-blue?style=for-the-badge&logo=github&logoColor=white" />
+  <img alt="Advanced Features" src="https://img.shields.io/badge/Advanced%20Features-Added-purple?style=for-the-badge&logo=github&logoColor=white" />
 </p>
 
 <p align="center">
-<strong>🚀 Enhanced Version with Comprehensive Code Documentation & Enterprise Features</strong>
+<strong>🚀 Enhanced Version with Comprehensive Documentation, Enterprise & Advanced Features</strong>
 </p>
 
 <p align="center">
-This fork includes 3,800+ lines of detailed English documentation, aerospace-level safety annotations, and improved code comments throughout the codebase, plus 7 new enterprise-level modules for production-ready deployment.
+This fork includes 3,800+ lines of detailed English documentation, aerospace-level safety annotations, and improved code comments throughout the codebase, plus 12 new enterprise and advanced-level modules for production-ready deployment.
 </p>
 
 <p align="center">
@@ -119,6 +120,28 @@ This enhanced version includes **7 new enterprise-level modules** for production
 - Notification templates and formatting
 - Notification queuing and retry logic
 - Notification history and tracking
+
+## 🚀 Advanced Features
+
+This enhanced version includes **2 new advanced-level modules** for enhanced extensibility and performance.
+
+### Plugin System (`plugin_system.py`)
+- Dynamic plugin loading and unloading
+- Plugin dependency management
+- Plugin sandboxing and security
+- Plugin configuration management
+- Plugin discovery and registration
+- Plugin lifecycle hooks
+- Plugin performance monitoring
+
+### Async Operations (`async_operations.py`)
+- Async operation management
+- Async context managers
+- Async iterators
+- Async task scheduling
+- Async resource cleanup
+- Async error handling
+- Async performance monitoring
 
 For detailed usage examples, see [ENTERPRISE_FEATURES.md](ENTERPRISE_FEATURES.md)
 

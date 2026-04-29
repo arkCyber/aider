@@ -15,6 +15,8 @@ This document provides usage examples and documentation for the new enterprise-l
 9. [Feature Flags](#feature-flags)
 10. [Session Management](#session-management)
 11. [Code Quality Gates](#code-quality-gates)
+12. [Plugin System](#plugin-system)
+13. [Async Operations](#async-operations)
 
 ---
 
@@ -579,6 +581,121 @@ class CustomRule(QualityRule):
 # Add custom rule to gate
 gate = manager.get_gate("custom_gate")
 gate.add_custom_rule(CustomRule("custom_rule"))
+```
+
+---
+
+## Plugin System
+
+### Overview
+
+The plugin system provides dynamic plugin loading and management with dependency resolution, sandboxing, and comprehensive lifecycle hooks for extending Aider's functionality.
+
+### Usage Example
+
+```python
+from aider.plugin_system import get_plugin_manager, BasePlugin
+
+# Get plugin manager
+manager = get_plugin_manager()
+
+# Load a plugin
+success = manager.load_plugin("my_plugin", config={"option": "value"})
+
+# Get plugin
+plugin = manager.get_plugin("my_plugin")
+
+# Unload plugin
+manager.unload_plugin("my_plugin")
+
+# List all plugins
+plugins = manager.list_plugins()
+
+# Get plugin statistics
+stats = manager.get_plugin_stats()
+print(f"Loaded plugins: {stats['loaded_plugins']}")
+```
+
+### Creating a Plugin
+
+```python
+from aider.plugin_system import BasePlugin, PluginHook
+
+class MyPlugin(BasePlugin):
+    def on_load(self):
+        print("Plugin loaded")
+    
+    def on_unload(self):
+        print("Plugin unloaded")
+    
+    def get_commands(self):
+        return {
+            "my_command": self.my_command,
+        }
+    
+    def get_hooks(self):
+        return {
+            PluginHook.ON_COMMAND: self.on_command_hook,
+        }
+```
+
+---
+
+## Async Operations
+
+### Overview
+
+The async operations system provides comprehensive async operation management with proper coroutine handling, task scheduling, resource pooling, and error handling for improved performance.
+
+### Usage Example
+
+```python
+from aider.async_operations import get_async_manager, async_operation
+
+# Get async manager
+manager = get_async_manager()
+
+# Run async operation
+async def my_operation():
+    await asyncio.sleep(1)
+    return 42
+
+result = manager.run_async_sync(my_operation(), "my_op")
+
+# Check result
+if result.success:
+    print(f"Result: {result.result}")
+else:
+    print(f"Error: {result.error}")
+
+# Use decorator
+@async_operation("test_op")
+async def decorated_function():
+    return 42
+```
+
+### Async Resource Pool
+
+```python
+from aider.async_operations import AsyncResourcePool
+
+async def use_pool():
+    pool = AsyncResourcePool(max_size=10)
+    
+    # Add resources
+    await pool.add_resource("resource1")
+    
+    # Acquire resource
+    resource = await pool.acquire()
+    
+    # Use resource
+    # ...
+    
+    # Release resource
+    await pool.release(resource)
+    
+    # Get stats
+    stats = await pool.get_stats()
 ```
 
 ---
