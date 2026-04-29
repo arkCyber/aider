@@ -191,6 +191,9 @@ class I18NManager:
         if output_path is None:
             output_path = self.locale_dir / f"{self.domain}.pot"
         
+        # Ensure parent directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
         # This is a simplified template creation
         # In production, use xgettext or similar tools
         template_content = f"""# Translation Template for {self.domain}
