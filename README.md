@@ -7,7 +7,15 @@ AI Pair Programming in Your Terminal
 </h1>
 
 <p align="center">
-Enhanced version with comprehensive code documentation
+  <img alt="Enhanced Documentation" src="https://img.shields.io/badge/Documentation-Enhanced-brightgreen?style=for-the-badge&logo=github&logoColor=white" />
+</p>
+
+<p align="center">
+<strong>🚀 Enhanced Version with Comprehensive Code Documentation</strong>
+</p>
+
+<p align="center">
+This fork includes 3,800+ lines of detailed English documentation, aerospace-level safety annotations, and improved code comments throughout the codebase.
 </p>
 
 <p align="center">
