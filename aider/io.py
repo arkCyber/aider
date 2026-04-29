@@ -20,11 +20,13 @@ display formatting, and command processing.
 
 import base64
 import functools
+import logging
 import os
 import shutil
 import signal
 import subprocess
 import time
+import traceback
 import webbrowser
 from collections import defaultdict
 from dataclasses import dataclass
@@ -385,6 +387,13 @@ class InputOutput:
             self.notifications_command = self.get_default_notification_command()
         else:
             self.notifications_command = notifications_command
+
+        logger = logging.getLogger(__name__)
+        logger.info("InputOutput class initializing")
+        logger.debug(f"Pretty mode: {pretty}")
+        logger.debug(f"Encoding: {encoding}")
+        logger.debug(f"Line endings: {line_endings}")
+        logger.debug(f"Notifications enabled: {notifications}")
 
         no_color = os.environ.get("NO_COLOR")
         if no_color is not None and no_color != "":
@@ -1146,6 +1155,8 @@ class InputOutput:
             message (str): Error message to display
             strip (bool): Whether to strip whitespace from the message
         """
+        logger = logging.getLogger(__name__)
+        logger.error(f"Tool error: {message}")
         self.num_error_outputs += 1
         self._tool_message(message, strip, self.tool_error_color)
 
@@ -1160,6 +1171,8 @@ class InputOutput:
             message (str): Warning message to display
             strip (bool): Whether to strip whitespace from the message
         """
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Tool warning: {message}")
         self._tool_message(message, strip, self.tool_warning_color)
 
     def tool_output(self, *messages, log_only=False, bold=False):

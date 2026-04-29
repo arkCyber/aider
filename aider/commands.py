@@ -25,6 +25,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import traceback
 from collections import OrderedDict
 from datetime import datetime
 from os.path import expanduser
@@ -324,6 +325,12 @@ class Commands:
         editor=None,
         original_read_only_fnames=None,
     ):
+        logger = logging.getLogger(__name__)
+        logger.info("Commands class initializing")
+        logger.debug(f"Voice language: {voice_language}")
+        logger.debug(f"Voice format: {voice_format}")
+        logger.debug(f"Verify SSL: {verify_ssl}")
+        
         self.io = io
         self.coder = coder
         self.parser = parser
@@ -993,22 +1000,34 @@ class Commands:
 
     def cmd_commit(self, args=None):
         "Commit edits to the repo made outside the chat (commit message optional)"
+        logger = logging.getLogger(__name__)
+        logger.info("Commit command executed")
+        logger.debug(f"Commit message: {args}")
         try:
             self.raw_cmd_commit(args)
         except ANY_GIT_ERROR as err:
+            logger.error(f"Git error during commit: {err}")
+            logger.error(traceback.format_exc())
             self.io.tool_error(f"Unable to complete commit: {err}")
 
     def raw_cmd_commit(self, args=None):
+        logger = logging.getLogger(__name__)
+        logger.debug("Raw commit command executing")
+        
         if not self.coder.repo:
+            logger.warning("No git repository found for commit")
             self.io.tool_error("No git repository found.")
             return
 
         if not self.coder.repo.is_dirty():
+            logger.info("No changes to commit (repo is clean)")
             self.io.tool_warning("No more changes to commit.")
             return
 
         commit_message = args.strip() if args else None
+        logger.info(f"Committing with message: {commit_message}")
         self.coder.repo.commit(message=commit_message, coder=self.coder)
+        logger.info("Commit completed successfully")
 
     def cmd_lint(self, args="", fnames=None):
         "Lint and fix in-chat files or all dirty files if none in chat"
@@ -1669,21 +1688,33 @@ class Commands:
 
     def cmd_run(self, args, add_on_nonzero_exit=False):
         "Run a shell command and optionally add the output to the chat (alias: !)"
+        logger = logging.getLogger(__name__)
+        logger.info(f"Running shell command: {args}")
+        logger.debug(f"Add on non-zero exit: {add_on_nonzero_exit}")
+        
         exit_status, combined_output = run_cmd(
             args, verbose=self.verbose, error_print=self.io.tool_error, cwd=self.coder.root, io=self.io
         )
 
+        logger.info(f"Command exit status: {exit_status}")
+        if exit_status != 0:
+            logger.warning(f"Command failed with exit status {exit_status}")
+
         if combined_output is None:
+            logger.warning("Command output is None")
             return
 
         # Calculate token count of output
         token_count = self.coder.main_model.token_count(combined_output)
         k_tokens = token_count / 1000
+        logger.debug(f"Command output token count: {k_tokens:.1f}k")
 
         if add_on_nonzero_exit:
             add = exit_status != 0
         else:
             add = self.io.confirm_ask(f"Add {k_tokens:.1f}k tokens of command output to the chat?")
+
+        logger.debug(f"Adding output to chat: {add}")
 
         if add:
             num_lines = len(combined_output.strip().splitlines())

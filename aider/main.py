@@ -45,6 +45,10 @@ except Exception:
     # Enterprise features are optional
     _enterprise_features = None
 
+# Logging setup
+import logging
+logger = logging.getLogger(__name__)
+
 from .dump import dump  # noqa: F401
 
 
@@ -355,6 +359,8 @@ def register_models(git_root, model_settings_fname, io, verbose=False):
         elif verbose:
             io.tool_output("No model settings files loaded")
     except Exception as e:
+        logger.error(f"Error loading aider model settings: {e}")
+        logger.error(traceback.format_exc())
         io.tool_error(f"Error loading aider model settings: {e}")
         return 1
 
@@ -391,6 +397,8 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
         except OSError as e:
             print(f"OSError loading {fname}: {e}")
         except Exception as e:
+            logger.error(f"Error loading dotenv file {fname}: {e}")
+            logger.debug(traceback.format_exc())
             print(f"Error loading {fname}: {e}")
     return loaded
 
@@ -413,6 +421,8 @@ def register_litellm_models(git_root, model_metadata_fname, io, verbose=False):
             for model_metadata_file in model_metadata_files_loaded:
                 io.tool_output(f"  - {model_metadata_file}")  # noqa: E221
     except Exception as e:
+        logger.error(f"Error loading model metadata models: {e}")
+        logger.error(traceback.format_exc())
         io.tool_error(f"Error loading model metadata models: {e}")
         return 1
 
@@ -457,24 +467,34 @@ def sanity_check_repo(repo, io):
 
 
 def main(argv=None, input=None, output=None, force_git_root=None, return_coder=False):
+    logger.info("=" * 60)
+    logger.info("Aider application starting")
+    logger.info(f"Version: {__version__}")
+    logger.info(f"Arguments: {argv}")
     report_uncaught_exceptions()
 
     if argv is None:
         argv = sys.argv[1:]
+        logger.debug(f"Using sys.argv: {argv}")
 
     if git is None:
         git_root = None
+        logger.warning("Git module not available")
     elif force_git_root:
         git_root = force_git_root
+        logger.info(f"Using forced git root: {git_root}")
     else:
         git_root = get_git_root()
+        logger.info(f"Detected git root: {git_root}")
 
     conf_fname = Path(".aider.conf.yml")
+    logger.debug(f"Config file name: {conf_fname}")
 
     default_config_files = []
     try:
         default_config_files += [conf_fname.resolve()]  # CWD
     except OSError:
+        logger.debug(f"Cannot resolve config file in CWD: {conf_fname}")
         pass
 
     if git_root:
@@ -483,13 +503,19 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             default_config_files.append(git_conf)
     default_config_files.append(Path.home() / conf_fname)  # homedir
     default_config_files = list(map(str, default_config_files))
+    logger.debug(f"Config files to search: {default_config_files}")
 
     parser = get_parser(default_config_files, git_root)
     try:
         args, unknown = parser.parse_known_args(argv)
+        logger.info(f"Arguments parsed successfully")
+        logger.debug(f"Known args: {args}")
+        logger.debug(f"Unknown args: {unknown}")
     except AttributeError as e:
+        logger.error(f"Attribute error while parsing arguments: {e}")
         if all(word in str(e) for word in ["bool", "object", "has", "no", "attribute", "strip"]):
             if check_config_files_for_yes(default_config_files):
+                logger.error("Configuration file contains deprecated 'yes:' syntax")
                 return 1
         raise e
 
@@ -500,6 +526,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             print(f"  - {file} {exists}")
 
     default_config_files.reverse()
+    logger.debug(f"Config files reversed: {default_config_files}")
 
     parser = get_parser(default_config_files, git_root)
 
@@ -978,6 +1005,10 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     analytics.event("auto_commits", enabled=bool(args.auto_commits))
 
     try:
+        logger.info("Creating Coder instance")
+        logger.debug(f"Main model: {main_model}")
+        logger.debug(f"Edit format: {args.edit_format}")
+        logger.debug(f"File names: {fnames}")
         coder = Coder.create(
             main_model=main_model,
             edit_format=args.edit_format,
