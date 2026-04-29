@@ -11,6 +11,10 @@ This document provides usage examples and documentation for the new enterprise-l
 5. [Performance Monitoring](#performance-monitoring)
 6. [Backup and Restore](#backup-and-restore)
 7. [Notification System](#notification-system)
+8. [Internationalization (i18n)](#internationalization)
+9. [Feature Flags](#feature-flags)
+10. [Session Management](#session-management)
+11. [Code Quality Gates](#code-quality-gates)
 
 ---
 
@@ -377,6 +381,205 @@ If notifications fail:
 - Verify channel configuration
 - Check network connectivity
 - Verify API keys and credentials
+
+---
+
+## Internationalization (i18n)
+
+### Overview
+
+The internationalization system provides multi-language support with gettext integration, supporting runtime language switching between English, Chinese, and other languages.
+
+### Usage Example
+
+```python
+from aider.i18n import set_language, get_language, translate, _
+
+# Set language
+set_language("zh")  # Switch to Chinese
+set_language("en")  # Switch to English
+
+# Get current language
+current_lang = get_language()
+print(f"Current language: {current_lang}")
+
+# Translate messages
+message = translate("AI Pair Programming in Your Terminal")
+# Or use shorthand
+message = _("Operation completed successfully")
+```
+
+### Supported Languages
+
+- English (en)
+- Chinese (zh)
+
+### Adding New Languages
+
+To add a new language:
+1. Create a translation file in `locales/{lang}/LC_MESSAGES/aider.po`
+2. Add translations for all messages
+3. Compile the translation file
+
+---
+
+## Feature Flags
+
+### Overview
+
+The feature flag system provides dynamic feature configuration with multiple rollout strategies (percentage-based, user-based, time-based, environment-based), supporting A/B testing and gradual rollouts.
+
+### Usage Example
+
+```python
+from aider.feature_flags import get_feature_flag_manager, is_enabled
+
+# Check if a feature is enabled
+if is_enabled("new_ui", user_id="user123"):
+    # Use new UI
+    pass
+else:
+    # Use old UI
+    pass
+
+# Get feature flag manager for advanced usage
+manager = get_feature_flag_manager()
+
+# Register a new flag
+from aider.feature_flags import FeatureFlag, RolloutStrategy
+flag = FeatureFlag(
+    name="experimental_feature",
+    enabled=True,
+    rollout_strategy=RolloutStrategy.PERCENTAGE,
+    rollout_percentage=10.0,
+)
+manager.register_flag(flag)
+
+# Get flag usage statistics
+stats = manager.get_flag_usage_stats("experimental_feature")
+print(f"Enabled percentage: {stats['enabled_percentage']:.2f}%")
+```
+
+### Rollout Strategies
+
+- **ALL_USERS**: Enable for all users
+- **PERCENTAGE**: Enable for a percentage of users (consistent per user)
+- **USER_LIST**: Enable for specific user IDs
+- **USER_ATTRIBUTE**: Enable based on user attributes
+- **TIME_BASED**: Enable during a specific time window
+- **ENVIRONMENT**: Enable for specific environments (dev, staging, prod)
+
+---
+
+## Session Management
+
+### Overview
+
+The session management system provides comprehensive session handling with persistence, security, and lifecycle management, including session timeout, cleanup, and context management.
+
+### Usage Example
+
+```python
+from aider.session_manager import get_session_manager, SessionConfig
+
+# Get session manager
+manager = get_session_manager()
+
+# Create a session
+session = manager.create_session(
+    user_id="user123",
+    context={"project": "my-project"},
+    metadata={"ip": "192.168.1.1"},
+)
+
+# Get session
+retrieved_session = manager.get_session(session.session_id)
+
+# Update session context
+manager.update_session(
+    session.session_id,
+    context={"new_key": "new_value"},
+)
+
+# Get all user sessions
+user_sessions = manager.get_user_sessions("user123")
+
+# Delete session
+manager.delete_session(session.session_id)
+
+# Get session statistics
+stats = manager.get_session_stats()
+print(f"Total sessions: {stats['total_sessions']}")
+```
+
+### Session Configuration
+
+```python
+from aider.session_manager import SessionConfig
+
+config = SessionConfig(
+    session_timeout_seconds=3600,  # 1 hour
+    max_sessions_per_user=5,
+    cleanup_interval_seconds=300,  # 5 minutes
+    persist_sessions=True,
+)
+manager = get_session_manager(config)
+```
+
+---
+
+## Code Quality Gates
+
+### Overview
+
+The code quality gates system provides automated code quality enforcement with configurable rules, including complexity analysis, duplication detection, code length checks, and custom quality rules.
+
+### Usage Example
+
+```python
+from aider.code_quality_gates import get_code_quality_gates
+
+# Get code quality gates manager
+manager = get_code_quality_gates()
+
+# Run all quality gates
+results = manager.run_all_gates(Path("/path/to/code"))
+
+# Generate quality report
+report = manager.generate_report(results)
+print(f"Overall status: {report['overall_status']}")
+print(f"Total issues: {report['total_issues']}")
+print(f"Critical issues: {report['critical_issues']}")
+
+# Check specific gate
+complexity_gate = manager.get_gate("complexity")
+if complexity_gate:
+    result = complexity_gate.check_directory(Path("/path/to/code"))
+    print(f"Complexity gate status: {result.status}")
+```
+
+### Built-in Quality Rules
+
+- **Cyclomatic Complexity**: Detect functions with high complexity
+- **Code Duplication**: Detect duplicated code blocks
+- **Code Length**: Detect files exceeding maximum length
+
+### Custom Quality Rules
+
+```python
+from aider.code_quality_gates import QualityRule, QualityIssue, QualitySeverity
+
+class CustomRule(QualityRule):
+    def check(self, file_path: Path) -> List[QualityIssue]:
+        # Implement custom check logic
+        issues = []
+        # ... check logic ...
+        return issues
+
+# Add custom rule to gate
+gate = manager.get_gate("custom_gate")
+gate.add_custom_rule(CustomRule("custom_rule"))
+```
 
 ---
 
