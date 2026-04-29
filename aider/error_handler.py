@@ -34,6 +34,7 @@ class ErrorCategory(Enum):
     PERMISSION = "permission"
     TIMEOUT = "timeout"
     RATE_LIMIT = "rate_limit"
+    CRITICAL = "critical"
     UNKNOWN = "unknown"
 
 
