@@ -124,7 +124,10 @@ class TestAsyncOperationDecorator(unittest.TestCase):
         
         result = asyncio.run(test_func())
         
-        self.assertEqual(result, 42)
+        # The decorator returns an AsyncOperationResult object
+        self.assertIsInstance(result, AsyncOperationResult)
+        self.assertTrue(result.success)
+        self.assertEqual(result.result, 42)
 
 
 class TestGatherWithErrorHandling(unittest.TestCase):

@@ -6,7 +6,6 @@ import unittest
 from datetime import datetime
 
 from aider.notification_system import (
-    BackupManager,
     Notification,
     NotificationChannel,
     NotificationManager,
