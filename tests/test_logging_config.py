@@ -3,6 +3,7 @@ Unit tests for logging configuration module.
 """
 
 import json
+import logging
 import os
 import tempfile
 import unittest
