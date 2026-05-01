@@ -283,7 +283,7 @@ def get_parser(default_config_files, git_root):
         "--full-index",
         action="store_true",
         default=False,
-        help="Enable full project indexing on startup (default: disabled)",
+        help="Enable full project indexing on startup with aerospace-grade reliability (default: disabled)",
     )
     group.add_argument(
         "--index-on-start",
@@ -295,7 +295,7 @@ def get_parser(default_config_files, git_root):
         "--index-background",
         action="store_true",
         default=False,
-        help="Run indexing in background after startup (default: foreground)",
+        help="Run indexing in background after startup to avoid blocking (default: foreground)",
     )
     group.add_argument(
         "--index-threshold",
@@ -307,7 +307,7 @@ def get_parser(default_config_files, git_root):
         "--index-max-memory",
         type=int,
         default=2048,
-        help="Maximum memory in MB for indexing (default: 2048)",
+        help="Maximum memory in MB for indexing operations (default: 2048)",
     )
 
     ##########

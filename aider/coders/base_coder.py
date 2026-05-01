@@ -493,6 +493,10 @@ class Coder:
             file_watcher: File watcher instance
             auto_copy_context: Whether to auto-copy context
             auto_accept_architect: Whether to auto-accept architect suggestions
+            full_index: Enable full project indexing on startup
+            index_background: Run indexing in background to avoid blocking
+            index_threshold: File count threshold for automatic indexing
+            index_max_memory: Maximum memory in MB for indexing operations
         """
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
@@ -1934,8 +1938,19 @@ class Coder:
         self.io.tool_output("─" * 60, log_only=False)
         self.io.tool_output("", log_only=False)
 
-    def _run_full_index_foreground(self):
-        """Run full project indexing in foreground."""
+    def _run_full_index_foreground(self) -> None:
+        """
+        Run full project indexing in foreground (blocking operation).
+        
+        This method performs a full project index synchronously, blocking
+        until the indexing operation completes. It provides user feedback
+        through the IO interface if verbose mode is enabled.
+        
+        The indexing includes:
+        - AST-based symbol extraction for Python files
+        - Cross-file reference tracking
+        - File metadata recording
+        """
         if not self.index_manager:
             return
         
@@ -1958,8 +1973,19 @@ class Coder:
                 self.io.tool_error(f"Full index failed: {e}")
             logger.error(f"Full index failed: {e}")
 
-    def _run_full_index_background(self):
-        """Run full project indexing in background thread."""
+    def _run_full_index_background(self) -> None:
+        """
+        Run full project indexing in background thread (non-blocking).
+        
+        This method performs a full project index asynchronously in a daemon thread,
+        allowing the main application to continue without waiting for indexing
+        to complete. It provides completion notification through the IO interface.
+        
+        The indexing includes:
+        - AST-based symbol extraction for Python files
+        - Cross-file reference tracking
+        - File metadata recording
+        """
         if not self.index_manager:
             return
         

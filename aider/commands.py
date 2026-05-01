@@ -3996,7 +3996,7 @@ theme:
         self.io.tool_output("\n" + "=" * 50, log_only=False)
         self.io.tool_output("Agent execution complete", log_only=False)
 
-    def cmd_index(self, args):
+    def cmd_index(self, args: str) -> None:
         """
         Manage project indexing with aerospace-grade reliability.
         
@@ -4004,18 +4004,19 @@ theme:
         including full indexing, incremental updates, and index status checking.
         
         Subcommands:
-            - full: Perform full project indexing
+            - full: Perform full project indexing with AST extraction
             - incremental: Perform incremental indexing of modified files
             - status: Show current index status and statistics
             - cancel: Cancel ongoing indexing operation
             
         Args:
-            args (str): Index command in format "<command>"
+            args: Index command in format "<command> [options]"
             
-        Example:
+        Examples:
             /index full
             /index incremental
             /index status
+            /index cancel
         """
         
         self.log_command_start("cmd_index", args)
@@ -4128,12 +4129,12 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
-    def cmd_search(self, args):
+    def cmd_search(self, args: str) -> None:
         """
         Search for symbols and references in the indexed codebase.
         
         This command provides semantic code search capabilities using the
-        aerospace-grade index system.
+        aerospace-grade index system with AST-based symbol extraction.
         
         Subcommands:
             - symbol <query> [kind]: Search for symbols by name (function, class, variable)
@@ -4141,9 +4142,9 @@ theme:
             - file <file_path>: Get all symbols in a specific file
             
         Args:
-            args (str): Search command in format "<command> [args]"
+            args: Search command in format "<command> [args]"
             
-        Example:
+        Examples:
             /search symbol my_function
             /search symbol MyClass class
             /search reference my_function

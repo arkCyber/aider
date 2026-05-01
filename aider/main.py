@@ -1071,6 +1071,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             suggest_shell_commands=args.suggest_shell_commands,
             chat_language=args.chat_language,
             commit_language=args.commit_language,
+            # Index configuration for aerospace-grade project indexing
             full_index=args.full_index or args.index_on_start,
             index_background=args.index_background,
             index_threshold=args.index_threshold,
