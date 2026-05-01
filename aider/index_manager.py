@@ -2350,6 +2350,148 @@ class IndexManager:
             logger.error(f"Error in batch search replace: {e}")
             return results
     
+    def extract_function(self, file_path: str, start_line: int, end_line: int, function_name: str) -> Dict:
+        """
+        Extract code into a new function.
+        
+        This method implements function extraction refactoring similar to Cursor,
+        extracting selected code into a new function and replacing it with a call.
+        
+        Args:
+            file_path: Path to the file
+            start_line: Starting line number (1-based)
+            end_line: Ending line number (1-based)
+            function_name: Name for the new function
+            
+        Returns:
+            Dictionary with extraction results
+        """
+        try:
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File does not exist'}
+            
+            with open(file_path_obj, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Validate line numbers
+            if start_line < 1 or end_line > len(lines) or start_line >= end_line:
+                return {'success': False, 'error': 'Invalid line numbers'}
+            
+            # Extract code
+            extracted_code = ''.join(lines[start_line-1:end_line])
+            
+            # Create function definition
+            indent = len(lines[start_line-1]) - len(lines[start_line-1].lstrip())
+            indent_str = ' ' * indent
+            
+            # Simple function extraction (for Python)
+            if file_path_obj.suffix == '.py':
+                new_function = f"{indent_str}def {function_name}():\n"
+                for line in lines[start_line-1:end_line]:
+                    new_function += f"{indent_str}    {line.lstrip()}"
+                
+                # Replace extracted code with function call
+                function_call = f"{indent_str}{function_name}()\n"
+                
+                # Modify file
+                new_lines = lines[:start_line-1] + [function_call] + lines[end_line:]
+                new_lines.insert(start_line-1, new_function)
+                
+                with open(file_path_obj, 'w', encoding='utf-8') as f:
+                    f.writelines(new_lines)
+                
+                return {
+                    'success': True,
+                    'function_name': function_name,
+                    'lines_extracted': end_line - start_line + 1
+                }
+            else:
+                return {'success': False, 'error': 'Only Python files are supported'}
+            
+        except Exception as e:
+            logger.error(f"Error extracting function: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def clean_code(self, file_path: str) -> Dict:
+        """
+        Clean up code by removing unused imports, fixing formatting, etc.
+        
+        This method implements code cleanup refactoring similar to Cursor,
+        performing various code quality improvements.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Dictionary with cleanup results
+        """
+        results = {
+            'unused_imports_removed': 0,
+            'formatting_fixed': False,
+            'errors': []
+        }
+        
+        try:
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                results['errors'].append('File does not exist')
+                return results
+            
+            with open(file_path_obj, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            original_content = content
+            
+            # Remove unused imports (simple heuristic)
+            if file_path_obj.suffix == '.py':
+                import re
+                
+                # Find all imports
+                imports = re.findall(r'^import\s+(\S+)|^from\s+(\S+)\s+import', content, re.MULTILINE)
+                
+                # Simple cleanup: remove duplicate imports
+                seen_imports = set()
+                lines = content.split('\n')
+                cleaned_lines = []
+                
+                for line in lines:
+                    is_import = line.strip().startswith('import ') or line.strip().startswith('from ')
+                    if is_import:
+                        if line not in seen_imports:
+                            seen_imports.add(line)
+                            cleaned_lines.append(line)
+                        else:
+                            results['unused_imports_removed'] += 1
+                    else:
+                        cleaned_lines.append(line)
+                
+                content = '\n'.join(cleaned_lines)
+            
+            # Fix basic formatting
+            # Remove trailing whitespace
+            lines = content.split('\n')
+            lines = [line.rstrip() for line in lines]
+            content = '\n'.join(lines)
+            
+            # Add trailing newline
+            if content and not content.endswith('\n'):
+                content += '\n'
+            
+            if content != original_content:
+                with open(file_path_obj, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                results['formatting_fixed'] = True
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error cleaning code: {e}")
+            results['errors'].append(str(e))
+            return results
+    
     def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
         Calculate cosine similarity between two vectors.

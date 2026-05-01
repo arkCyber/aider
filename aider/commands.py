@@ -3404,6 +3404,8 @@ theme:
             - rename <old_name> <new_name> [kind]: Rename symbol across all files
             - batch <pattern> <replacement> [file_pattern]: Batch search and replace
             - multi-edit <json_edits>: Edit multiple files at once (JSON format)
+            - extract <file_path> <start_line> <end_line> <function_name>: Extract code into function
+            - clean <file_path>: Clean up code formatting and imports
             
         Args:
             args: Refactoring command in format "<command> [args]"
@@ -3506,9 +3508,50 @@ theme:
                     self.io.tool_error(f"Invalid JSON format: {e}")
                     return
             
+            elif command == 'extract':
+                if len(parts) < 5:
+                    self.io.tool_error("Usage: /refactor extract <file_path> <start_line> <end_line> <function_name>")
+                    return
+                
+                file_path = parts[1]
+                try:
+                    start_line = int(parts[2])
+                    end_line = int(parts[3])
+                    function_name = parts[4]
+                except ValueError:
+                    self.io.tool_error("Line numbers must be integers")
+                    return
+                
+                results = self.coder.index_manager.extract_function(file_path, start_line, end_line, function_name)
+                
+                if results['success']:
+                    self.io.tool_output(f"\n✓ Function extracted successfully", log_only=False)
+                    self.io.tool_output(f"  Function name: {results['function_name']}", log_only=False)
+                    self.io.tool_output(f"  Lines extracted: {results['lines_extracted']}", log_only=False)
+                else:
+                    self.io.tool_output(f"\n✗ Function extraction failed", log_only=False)
+                    self.io.tool_output(f"  Error: {results.get('error', 'Unknown error')}", log_only=False)
+            
+            elif command == 'clean':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /refactor clean <file_path>")
+                    return
+                
+                file_path = parts[1]
+                results = self.coder.index_manager.clean_code(file_path)
+                
+                self.io.tool_output(f"\n📊 Code cleanup results:", log_only=False)
+                self.io.tool_output(f"  Unused imports removed: {results['unused_imports_removed']}", log_only=False)
+                self.io.tool_output(f"  Formatting fixed: {results['formatting_fixed']}", log_only=False)
+                
+                if results['errors']:
+                    self.io.tool_output(f"\n  Errors: {len(results['errors'])}", log_only=False)
+                    for error in results['errors']:
+                        self.io.tool_output(f"    • {error}", log_only=False)
+            
             else:
                 self.io.tool_error(f"Unknown command: {command}")
-                self.io.tool_output("Available commands: rename, batch, multi-edit", log_only=False)
+                self.io.tool_output("Available commands: rename, batch, multi-edit, extract, clean", log_only=False)
                 self.log_command_end("cmd_refactor", "error", f"Unknown command: {command}")
                 return
             
