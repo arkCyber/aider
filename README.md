@@ -229,6 +229,12 @@ aider --model o3-mini --api-key openai=<key>
 
 See the [installation instructions](https://aider.chat/docs/install.html) and [usage documentation](https://aider.chat/docs/usage.html) for more details.
 
+## Recent Improvements
+
+### User Experience Enhancements
+
+- **Case-insensitive input**: All confirmation prompts now accept both uppercase and lowercase inputs (e.g., `y/Y`, `n/N`, `yes/YES`, `no/NO`) for better user experience
+
 ## More Information
 
 ### Documentation

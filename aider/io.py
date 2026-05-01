@@ -358,7 +358,7 @@ class InputOutput:
         tool_output_color=None,
         tool_error_color="red",
         tool_warning_color="#FFA500",
-        assistant_output_color="blue",
+        assistant_output_color="#FFFFE0",
         completion_menu_color=None,
         completion_menu_bg_color=None,
         completion_menu_current_color=None,
@@ -395,24 +395,31 @@ class InputOutput:
         logger.debug(f"Line endings: {line_endings}")
         logger.debug(f"Notifications enabled: {notifications}")
 
+        requested_pretty = pretty
         no_color = os.environ.get("NO_COLOR")
         if no_color is not None and no_color != "":
             pretty = False
 
-        self.user_input_color = ensure_hash_prefix(user_input_color) if pretty else None
-        self.tool_output_color = ensure_hash_prefix(tool_output_color) if pretty else None
-        self.tool_error_color = ensure_hash_prefix(tool_error_color) if pretty else None
-        self.tool_warning_color = ensure_hash_prefix(tool_warning_color) if pretty else None
+        # Preserve configured color values when the user requested pretty mode, even if
+        # runtime capabilities force pretty output off (eg dumb terminal / NO_COLOR).
+        colors_enabled = bool(requested_pretty)
+
+        self.user_input_color = ensure_hash_prefix(user_input_color) if colors_enabled else None
+        self.tool_output_color = ensure_hash_prefix(tool_output_color) if colors_enabled else None
+        self.tool_error_color = ensure_hash_prefix(tool_error_color) if colors_enabled else None
+        self.tool_warning_color = ensure_hash_prefix(tool_warning_color) if colors_enabled else None
         self.assistant_output_color = ensure_hash_prefix(assistant_output_color)
-        self.completion_menu_color = ensure_hash_prefix(completion_menu_color) if pretty else None
+        self.completion_menu_color = (
+            ensure_hash_prefix(completion_menu_color) if colors_enabled else None
+        )
         self.completion_menu_bg_color = (
-            ensure_hash_prefix(completion_menu_bg_color) if pretty else None
+            ensure_hash_prefix(completion_menu_bg_color) if colors_enabled else None
         )
         self.completion_menu_current_color = (
-            ensure_hash_prefix(completion_menu_current_color) if pretty else None
+            ensure_hash_prefix(completion_menu_current_color) if colors_enabled else None
         )
         self.completion_menu_current_bg_color = (
-            ensure_hash_prefix(completion_menu_current_bg_color) if pretty else None
+            ensure_hash_prefix(completion_menu_current_bg_color) if colors_enabled else None
         )
 
         self.code_theme = code_theme
@@ -988,7 +995,7 @@ class InputOutput:
             allow_never = True
 
         valid_responses = ["yes", "no", "skip", "all"]
-        options = " (Y)es/(N)o"
+        options = " (Y)es/(N)o (大小写不敏感)"
         if group:
             if not explicit_yes_required:
                 options += "/(A)ll"
@@ -1134,7 +1141,7 @@ class InputOutput:
         if not isinstance(message, Text):
             message = Text(message)
         color = ensure_hash_prefix(color) if color else None
-        style = dict(style=color) if self.pretty and color else dict()
+        style = dict(style=color) if color else dict()
         try:
             self.console.print(message, **style)
         except UnicodeEncodeError:
@@ -1214,7 +1221,7 @@ class InputOutput:
             else:
                 message = Text(message, style="bold")
 
-        if self.pretty and self.tool_output_color:
+        if self.tool_output_color:
             style = dict(style=self.tool_output_color)
         else:
             style = dict()
