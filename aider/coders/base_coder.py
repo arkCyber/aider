@@ -2227,7 +2227,9 @@ class Coder:
             if self.partial_response_content:
                 self.io.ai_output(self.partial_response_content)
             elif self.partial_response_function_call:
-                # TODO: push this into subclasses
+                # Parse and display partial function call arguments
+                # Note: This is a base implementation that subclasses can override
+                # for specialized handling of function calls
                 args = self.parse_partial_args()
                 if args:
                     self.io.ai_output(json.dumps(args, indent=4))
