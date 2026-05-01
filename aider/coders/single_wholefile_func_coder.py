@@ -78,6 +78,13 @@ class SingleWholeFileFunctionCoder(Coder):
             res += "📋 **Plan:**\n\n"
             res += f"{explanation}\n\n"
 
+        # Show content statistics
+        if content:
+            line_count = len(content.splitlines())
+            char_count = len(content)
+            res += "**Content to write:**\n\n"
+            res += f"Total: {line_count} line(s), {char_count} character(s)\n\n"
+
         for k, v in args.items():
             res += "\n"
             res += f"{k}:\n"

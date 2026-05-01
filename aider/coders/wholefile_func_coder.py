@@ -89,6 +89,23 @@ class WholeFileFunctionCoder(Coder):
             res += "📋 **Plan:**\n\n"
             res += f"{explanation}\n\n"
 
+        # Show files to be modified
+        if files:
+            res += "**Files to modify:**\n\n"
+            total_files = len(files)
+            total_lines = sum(len(file_upd.get("content", "").splitlines()) for file_upd in files)
+            res += f"Total: {total_files} file(s), approximately {total_lines} line(s)\n\n"
+            
+            for i, file_upd in enumerate(files, 1):
+                path = file_upd.get("path")
+                if not path:
+                    continue
+                content = file_upd.get("content")
+                if content:
+                    line_count = len(content.splitlines())
+                    res += f"{i}. `{path}` ({line_count} line(s))\n"
+            res += "\n"
+
         for i, file_upd in enumerate(files):
             path = file_upd.get("path")
             if not path:

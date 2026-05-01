@@ -117,14 +117,18 @@ class EditBlockFunctionCoder(Coder):
             
             # Show edits in a readable format
             if edits:
-                res += "**Edits to make:**\n\n"
+                res += "**Files to modify:**\n\n"
+                total_files = len(edits)
+                total_lines = sum(len(edit.get("original_lines", [])) for edit in edits)
+                res += f"Total: {total_files} file(s), {total_lines} line(s) to be modified\n\n"
+                
                 for i, edit in enumerate(edits, 1):
                     path = edit.get("path", "unknown")
                     original_lines = edit.get("original_lines", [])
                     updated_lines = edit.get("updated_lines", [])
                     res += f"{i}. `{path}`\n"
                     if original_lines:
-                        res += f"   - Replace {len(original_lines)} line(s)\n"
+                        res += f"   - Replace {len(original_lines)} line(s) with {len(updated_lines)} line(s)\n"
                     res += "\n"
             
             return res
