@@ -296,7 +296,7 @@ class IndexManager:
             
             # Create references table for cross-file tracking
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS references (
+                CREATE TABLE IF NOT EXISTS "references" (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     from_file TEXT,
                     to_file TEXT,
@@ -366,8 +366,8 @@ class IndexManager:
             # Create indexes for better query performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_references_symbol ON references(symbol_name)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_references_from ON references(from_file)")
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_references_symbol ON "references"(symbol_name)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_references_from ON "references"(from_file)')
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(content_hash)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_history_sha ON git_history(commit_sha)")
