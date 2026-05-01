@@ -42,17 +42,31 @@ class ContextCoder(Coder):
         if not content or not content.strip():
             return True
 
-        # Show phase results summary
+        # Show phase results summary with specific details
         if self.io.pretty:
             current_rel_fnames = set(self.get_inchat_relative_files())
             mentioned_rel_fnames = set(self.get_file_mentions(content, ignore_current=True))
+            
+            # Calculate specific statistics
+            added_files = mentioned_rel_fnames - current_rel_fnames
+            removed_files = current_rel_fnames - mentioned_rel_fnames
+            content_lines = len(content.splitlines())
             
             self.io.tool_output("\n" + "─" * 60, log_only=False)
             self.io.tool_output("📊 Phase Results Summary", log_only=False, bold=True)
             self.io.tool_output("─" * 60, log_only=False)
             self.io.tool_output("✅ File identification phase completed", log_only=False)
-            self.io.tool_output(f"   • Files in chat: {len(current_rel_fnames)}", log_only=False)
-            self.io.tool_output(f"   • Files identified: {len(mentioned_rel_fnames)}", log_only=False)
+            self.io.tool_output(f"   • Files currently in chat: {len(current_rel_fnames)}", log_only=False)
+            self.io.tool_output(f"   • Files identified for editing: {len(mentioned_rel_fnames)}", log_only=False)
+            if added_files:
+                self.io.tool_output(f"   • Files to be added: {len(added_files)}", log_only=False)
+                for fname in sorted(added_files):
+                    self.io.tool_output(f"     - {fname}", log_only=False)
+            if removed_files:
+                self.io.tool_output(f"   • Files to be removed: {len(removed_files)}", log_only=False)
+                for fname in sorted(removed_files):
+                    self.io.tool_output(f"     - {fname}", log_only=False)
+            self.io.tool_output(f"   • Analysis content: {content_lines} lines", log_only=False)
             self.io.tool_output("─" * 60, log_only=False)
             self.io.tool_output("", log_only=False)
 

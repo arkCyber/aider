@@ -86,11 +86,13 @@ class WholeFileFunctionCoder(Coder):
         res = ""
         if explanation:
             # Add visual indicator for planning content with better formatting
+            explanation_lines = len(explanation.splitlines())
             res += "\n"
             res += "─" * 60 + "\n"
             res += "📋 **PLAN OVERVIEW**\n"
             res += "─" * 60 + "\n\n"
             res += f"{explanation}\n\n"
+            res += f"📊 Plan details: {explanation_lines} lines of instructions\n\n"
 
         # Show files to be modified with better visuals
         if files:
@@ -104,7 +106,8 @@ class WholeFileFunctionCoder(Coder):
             
             res += f"📊 **Summary:** {total_files} file(s) to be modified\n"
             res += f"   • Total lines: approximately {total_lines}\n"
-            res += f"   • Total characters: {total_chars}\n\n"
+            res += f"   • Total characters: {total_chars}\n"
+            res += f"   • Average file size: ~{total_chars // total_files if total_files else 0} characters\n\n"
             res += "─" * 60 + "\n\n"
             
             for i, file_upd in enumerate(files, 1):
@@ -116,9 +119,12 @@ class WholeFileFunctionCoder(Coder):
                     line_count = len(content.splitlines())
                     char_count = len(content)
                     file_size_kb = char_count / 1024
+                    word_count = len(content.split())
+                    
                     res += f"**{i}.** 📄 `{path}`\n"
                     res += f"   • Lines: {line_count}\n"
                     res += f"   • Characters: {char_count}\n"
+                    res += f"   • Words: {word_count}\n"
                     res += f"   • Size: ~{file_size_kb:.2f} KB\n\n"
             
             res += "─" * 60 + "\n\n"

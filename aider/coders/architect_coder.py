@@ -34,13 +34,18 @@ class ArchitectCoder(AskCoder):
             self.io.tool_info("Review the plan above before proceeding", log_only=False)
             self.io.tool_output("", log_only=False)
 
-        # Show work results summary
+        # Show work results summary with specific details
         if self.io.pretty:
+            # Calculate plan statistics
+            content_lines = content.splitlines()
+            plan_lines = len([line for line in content_lines if line.strip()])
+            
             self.io.tool_output("─" * 60, log_only=False)
             self.io.tool_output("📊 Phase Results Summary", log_only=False, bold=True)
             self.io.tool_output("─" * 60, log_only=False)
             self.io.tool_output("✅ Planning phase completed successfully", log_only=False)
             self.io.tool_output("   • Plan generated and ready for review", log_only=False)
+            self.io.tool_output(f"   • Plan contains {plan_lines} lines of detailed instructions", log_only=False)
             self.io.tool_output("   • No files modified yet", log_only=False)
             self.io.tool_output("   • Awaiting user confirmation to proceed", log_only=False)
             self.io.tool_output("─" * 60, log_only=False)
