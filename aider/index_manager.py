@@ -674,15 +674,56 @@ class IndexManager:
                     self.io.tool_output("No files to index", log_only=False)
                 return self.stats
             
+            # Build file hashes for Merkle tree
+            file_hashes = {}
+            for filepath in files:
+                try:
+                    file_hash = self._get_file_hash(filepath)
+                    file_hashes[str(filepath)] = file_hash
+                except Exception as e:
+                    logger.warning(f"Failed to hash {filepath}: {e}")
+            
+            # Build Merkle tree for efficient change detection
+            if self.verbose and self.io:
+                self.io.tool_output("\n" + "─" * 60, log_only=False)
+                self.io.tool_output("🌳 Building Merkle tree...", log_only=False, bold=True)
+                self.io.tool_output("─" * 60, log_only=False)
+            
+            new_merkle_tree = self._build_merkle_tree(file_hashes)
+            
+            # Load previous Merkle tree if exists
+            old_merkle_tree = None
+            try:
+                conn = sqlite3.connect(str(self.index_db_path))
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM metadata WHERE key = 'merkle_tree'")
+                result = cursor.fetchone()
+                if result:
+                    import json
+                    old_merkle_dict = json.loads(result[0])
+                    old_merkle_tree = self._dict_to_merkle_node(old_merkle_dict)
+                conn.close()
+            except Exception as e:
+                logger.debug(f"Failed to load previous Merkle tree: {e}")
+            
+            # Determine which files need re-indexing
+            if not force and old_merkle_tree:
+                changed_files = self._get_changed_files(old_merkle_tree, new_merkle_tree)
+                if self.verbose and self.io:
+                    self.io.tool_output(f"Changed files detected: {len(changed_files)}", log_only=False)
+                files_to_index = [f for f in files if str(f) in changed_files]
+            else:
+                files_to_index = files
+            
             # Index files
             self.status = IndexStatus.INDEXING
             
             if self.verbose and self.io:
                 self.io.tool_output("\n" + "─" * 60, log_only=False)
-                self.io.tool_output("📝 Indexing files...", log_only=False, bold=True)
+                self.io.tool_output(f"📝 Indexing {len(files_to_index)} files...", log_only=False, bold=True)
                 self.io.tool_output("─" * 60, log_only=False)
             
-            progress_bar = tqdm(files, desc="Indexing", disable=not self.verbose)
+            progress_bar = tqdm(files_to_index, desc="Indexing", disable=not self.verbose)
             
             for filepath in progress_bar:
                 if self._cancel_flag:
@@ -706,6 +747,19 @@ class IndexManager:
                     self.stats.failed_files += 1
                     if error:
                         self.stats.errors.append(error)
+            
+            # Save Merkle tree for next time
+            try:
+                conn = sqlite3.connect(str(self.index_db_path))
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO metadata (key, value)
+                    VALUES ('merkle_tree', ?)
+                """, (json.dumps(new_merkle_tree.to_dict()),))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.warning(f"Failed to save Merkle tree: {e}")
             
             # Index Git history
             if self.verbose and self.io:
@@ -1444,6 +1498,23 @@ class IndexManager:
             files.update(self._get_all_files_from_tree(child))
         
         return files
+    
+    def _dict_to_merkle_node(self, data: Dict) -> MerkleNode:
+        """
+        Convert dictionary to MerkleNode for deserialization.
+        
+        Args:
+            data: Dictionary containing MerkleNode data
+            
+        Returns:
+            MerkleNode object
+        """
+        return MerkleNode(
+            hash=data['hash'],
+            children=[self._dict_to_merkle_node(child) for child in data['children']],
+            file_path=data.get('file_path'),
+            is_leaf=data['is_leaf']
+        )
     
     def _index_git_history(self) -> None:
         """
