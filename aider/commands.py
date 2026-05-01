@@ -51,15 +51,32 @@ from .dump import dump  # noqa: F401
 
 # Configure logging for aerospace-level audit trails
 # This ensures all critical operations are logged for compliance and debugging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('.aider_audit.log'),
-        logging.StreamHandler()
-    ]
-)
-audit_logger = logging.getLogger('aider.audit')
+from pathlib import Path
+
+
+def _create_audit_logger():
+    """Create an audit logger that gracefully handles unwritable home directories."""
+    logger = logging.getLogger("aider.audit")
+    logger.setLevel(logging.INFO)
+
+    if logger.handlers:
+        return logger
+
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    try:
+        audit_log_dir = Path.home() / ".aider" / "logs"
+        audit_log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(audit_log_dir / "aider_audit.log")
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except OSError:
+        # Keep import-time behavior safe in restricted environments (CI/sandbox).
+        logger.addHandler(logging.NullHandler())
+
+    return logger
+
+
+audit_logger = _create_audit_logger()
 
 
 class SwitchCoder(Exception):
@@ -3979,6 +3996,251 @@ theme:
         self.io.tool_output("\n" + "=" * 50, log_only=False)
         self.io.tool_output("Agent execution complete", log_only=False)
 
+    def cmd_index(self, args):
+        """
+        Manage project indexing with aerospace-grade reliability.
+        
+        This command provides comprehensive project indexing capabilities,
+        including full indexing, incremental updates, and index status checking.
+        
+        Subcommands:
+            - full: Perform full project indexing
+            - incremental: Perform incremental indexing of modified files
+            - status: Show current index status and statistics
+            - cancel: Cancel ongoing indexing operation
+            
+        Args:
+            args (str): Index command in format "<command>"
+            
+        Example:
+            /index full
+            /index incremental
+            /index status
+        """
+        
+        self.log_command_start("cmd_index", args)
+        
+        parts = args.strip().split()
+        
+        if not parts:
+            self.io.tool_error("Usage: /index <command>")
+            self.io.tool_error("Commands: full, incremental, status, cancel")
+            self.io.tool_error("Example: /index full")
+            self.log_command_end("cmd_index", "error", "No arguments provided")
+            return
+        
+        command = parts[0].lower()
+        
+        # Check if index manager is available
+        if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+            self.io.tool_error("Index manager not available. Check configuration.")
+            self.log_command_end("cmd_index", "error", "Index manager not available")
+            return
+        
+        self.io.tool_output(f"📊 Index: {command}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if command == 'full':
+                self.io.tool_output("\n🚀 Starting full project index...", log_only=False)
+                self.io.tool_output("This may take a while for large projects.", log_only=False)
+                self.io.tool_output("", log_only=False)
+                
+                stats = self.coder.index_manager.index_full(force=True)
+                
+                self.io.tool_output("\n" + "─" * 50, log_only=False)
+                self.io.tool_output("✅ Index Complete", log_only=False, bold=True)
+                self.io.tool_output("─" * 50, log_only=False)
+                self.io.tool_output(f"📊 Statistics:", log_only=False)
+                self.io.tool_output(f"   • Total files: {stats.total_files}", log_only=False)
+                self.io.tool_output(f"   • Indexed: {stats.indexed_files}", log_only=False)
+                self.io.tool_output(f"   • Failed: {stats.failed_files}", log_only=False)
+                self.io.tool_output(f"   • Skipped: {stats.skipped_files}", log_only=False)
+                
+                if stats.start_time and stats.end_time:
+                    duration = (stats.end_time - stats.start_time).total_seconds()
+                    self.io.tool_output(f"   • Duration: {duration:.2f} seconds", log_only=False)
+                
+                if stats.memory_peak_mb > 0:
+                    self.io.tool_output(f"   • Peak memory: {stats.memory_peak_mb:.2f} MB", log_only=False)
+                
+                if stats.errors:
+                    self.io.tool_output(f"\n⚠️ Errors ({len(stats.errors)}):", log_only=False)
+                    for error in stats.errors[:5]:
+                        self.io.tool_output(f"   - {error}", log_only=False)
+                
+                self.io.tool_output("─" * 50, log_only=False)
+                
+            elif command == 'incremental':
+                self.io.tool_output("\n🔄 Starting incremental index...", log_only=False)
+                
+                stats = self.coder.index_manager.index_incremental()
+                
+                if stats.total_files == 0:
+                    self.io.tool_success("No files need incremental indexing")
+                else:
+                    self.io.tool_output(f"\n✅ Incremental index complete", log_only=False)
+                    self.io.tool_output(f"📊 Indexed {stats.indexed_files} files", log_only=False)
+                    if stats.failed_files > 0:
+                        self.io.tool_warning(f"Failed: {stats.failed_files} files", log_only=False)
+                
+            elif command == 'status':
+                status, stats = self.coder.index_manager.get_status()
+                
+                self.io.tool_output(f"\n📊 Current Status: {status.value}", log_only=False, bold=True)
+                self.io.tool_output("", log_only=False)
+                
+                if stats:
+                    self.io.tool_output("Statistics:", log_only=False)
+                    self.io.tool_output(f"   • Total files: {stats.total_files}", log_only=False)
+                    self.io.tool_output(f"   • Indexed: {stats.indexed_files}", log_only=False)
+                    self.io.tool_output(f"   • Failed: {stats.failed_files}", log_only=False)
+                    self.io.tool_output(f"   • Skipped: {stats.skipped_files}", log_only=False)
+                    
+                    if stats.start_time:
+                        self.io.tool_output(f"   • Start time: {stats.start_time.isoformat()}", log_only=False)
+                    if stats.end_time:
+                        self.io.tool_output(f"   • End time: {stats.end_time.isoformat()}", log_only=False)
+                    if stats.memory_peak_mb > 0:
+                        self.io.tool_output(f"   • Peak memory: {stats.memory_peak_mb:.2f} MB", log_only=False)
+                    
+                    if stats.errors:
+                        self.io.tool_output(f"\n⚠️ Recent errors ({len(stats.errors)}):", log_only=False)
+                        for error in stats.errors[-3:]:
+                            self.io.tool_output(f"   - {error}", log_only=False)
+                
+            elif command == 'cancel':
+                self.io.tool_output("\n🛑 Cancelling index operation...", log_only=False)
+                self.coder.index_manager.cancel()
+                self.io.tool_success("Index operation cancelled")
+                
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_output("Available commands: full, incremental, status, cancel", log_only=False)
+                self.log_command_end("cmd_index", "error", f"Unknown command: {command}")
+                return
+            
+            self.log_command_end("cmd_index", "success", f"Command {command} completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_index", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_search(self, args):
+        """
+        Search for symbols and references in the indexed codebase.
+        
+        This command provides semantic code search capabilities using the
+        aerospace-grade index system.
+        
+        Subcommands:
+            - symbol <query> [kind]: Search for symbols by name (function, class, variable)
+            - reference <symbol_name>: Search for references to a symbol
+            - file <file_path>: Get all symbols in a specific file
+            
+        Args:
+            args (str): Search command in format "<command> [args]"
+            
+        Example:
+            /search symbol my_function
+            /search symbol MyClass class
+            /search reference my_function
+            /search file /path/to/file.py
+        """
+        
+        self.log_command_start("cmd_search", args)
+        
+        parts = args.strip().split()
+        
+        if not parts:
+            self.io.tool_error("Usage: /search <command> [args]")
+            self.io.tool_error("Commands: symbol, reference, file")
+            self.io.tool_error("Example: /search symbol my_function")
+            self.log_command_end("cmd_search", "error", "No arguments provided")
+            return
+        
+        command = parts[0].lower()
+        
+        # Check if index manager is available
+        if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+            self.io.tool_error("Index manager not available. Check configuration.")
+            self.log_command_end("cmd_search", "error", "Index manager not available")
+            return
+        
+        self.io.tool_output(f"🔍 Search: {command}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if command == 'symbol':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /search symbol <query> [kind]")
+                    self.io.tool_error("Kinds: function, class, variable")
+                    return
+                
+                query = parts[1]
+                kind = parts[2] if len(parts) > 2 else None
+                
+                results = self.coder.index_manager.search_symbols(query, kind)
+                
+                if not results:
+                    self.io.tool_output(f"No symbols found matching '{query}'", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📊 Found {len(results)} symbols:", log_only=False)
+                    for result in results:
+                        self.io.tool_output(f"  • {result['name']} ({result['kind']})", log_only=False)
+                        self.io.tool_output(f"    File: {result['file_path']}", log_only=False)
+                        self.io.tool_output(f"    Line: {result['line']}", log_only=False)
+                        self.io.tool_output("", log_only=False)
+                
+            elif command == 'reference':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /search reference <symbol_name>")
+                    return
+                
+                symbol_name = parts[1]
+                results = self.coder.index_manager.search_references(symbol_name)
+                
+                if not results:
+                    self.io.tool_output(f"No references found to '{symbol_name}'", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📊 Found {len(results)} references:", log_only=False)
+                    for result in results:
+                        self.io.tool_output(f"  • In {result['from_file']}", log_only=False)
+                        self.io.tool_output(f"    Symbol: {result['symbol_name']}", log_only=False)
+                        self.io.tool_output(f"    Line: {result['line']}", log_only=False)
+                        self.io.tool_output("", log_only=False)
+                
+            elif command == 'file':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /search file <file_path>")
+                    return
+                
+                file_path = parts[1]
+                results = self.coder.index_manager.get_file_symbols(file_path)
+                
+                if not results:
+                    self.io.tool_output(f"No symbols found in '{file_path}'", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📊 Found {len(results)} symbols in {file_path}:", log_only=False)
+                    for result in results:
+                        self.io.tool_output(f"  • {result['name']} ({result['kind']}) - Line {result['line']}", log_only=False)
+                
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_output("Available commands: symbol, reference, file", log_only=False)
+                self.log_command_end("cmd_search", "error", f"Unknown command: {command}")
+                return
+            
+            self.log_command_end("cmd_search", "success", f"Command {command} completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_search", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_ci(self, args):
         "CI/CD integration (GitHub Actions, GitLab CI)"
         import subprocess
@@ -4155,6 +4417,679 @@ lint:
             self.io.tool_error(f"Error: {e}")
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_generate_test(self, args):
+        """
+        Generate automatic tests for a file or function.
+
+        This command uses the test generator to create unit tests for Python code.
+        It analyzes the code structure and generates test cases with edge cases.
+
+        Args:
+            args (str): File path to generate tests for
+
+        Returns:
+            None: Test code is displayed via tool_output
+
+        Example:
+            /generate_test mymodule.py
+        """
+        from aider.test_generator import TestGenerator, TestFramework
+
+        if not args:
+            self.io.tool_error("Please provide a file path to generate tests for")
+            return
+
+        filepath = args.strip()
+        if not Path(filepath).exists():
+            self.io.tool_error(f"File not found: {filepath}")
+            return
+
+        try:
+            generator = TestGenerator(framework=TestFramework.PYTEST)
+            test_code = generator.generate_test_file(filepath)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"Generated tests for {filepath}:", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+            self.io.tool_output(test_code, log_only=False)
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+            # Suggest output file
+            output_file = f"test_{Path(filepath).stem}.py"
+            self.io.tool_output(f"Tip: Save this to {output_file} to use the tests", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error generating tests: {e}")
+            audit_logger.error(f"Test generation failed for {filepath}: {e}")
+
+    def cmd_explain(self, args):
+        """
+        Explain code in a file or function.
+
+        This command uses the code explainer to analyze and explain code,
+        providing insights into complexity, dependencies, and potential issues.
+
+        Args:
+            args (str): File path to explain
+
+        Returns:
+            None: Explanation is displayed via tool_output
+
+        Example:
+            /explain mymodule.py
+        """
+        from aider.code_explainer import CodeExplainer, ExplanationLevel
+
+        if not args:
+            self.io.tool_error("Please provide a file path to explain")
+            return
+
+        filepath = args.strip()
+        if not Path(filepath).exists():
+            self.io.tool_error(f"File not found: {filepath}")
+            return
+
+        try:
+            explainer = CodeExplainer(level=ExplanationLevel.DETAILED)
+            explanations = explainer.explain_file(filepath)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"Code Explanation for {filepath}:", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+
+            for name, explanation in explanations.items():
+                self.io.tool_output(f"\n## {name}:", log_only=False)
+                self.io.tool_output(f"**Summary:** {explanation.summary}", log_only=False)
+                
+                if explanation.key_points:
+                    self.io.tool_output(f"\n**Key Points:**", log_only=False)
+                    for point in explanation.key_points:
+                        self.io.tool_output(f"  - {point}", log_only=False)
+                
+                if explanation.potential_issues:
+                    self.io.tool_output(f"\n**Potential Issues:**", log_only=False)
+                    for issue in explanation.potential_issues:
+                        self.io.tool_output(f"  - {issue}", log_only=False)
+                
+                if explanation.suggestions:
+                    self.io.tool_output(f"\n**Suggestions:**", log_only=False)
+                    for suggestion in explanation.suggestions:
+                        self.io.tool_output(f"  - {suggestion}", log_only=False)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error explaining code: {e}")
+            audit_logger.error(f"Code explanation failed for {filepath}: {e}")
+
+    def cmd_refactor(self, args):
+        """
+        Analyze code and provide refactoring suggestions.
+
+        This command uses the refactoring assistant to analyze code,
+        identify code smells, and provide safe refactoring suggestions.
+
+        Args:
+            args (str): File path to analyze for refactoring
+
+        Returns:
+            None: Refactoring suggestions are displayed via tool_output
+
+        Example:
+            /refactor mymodule.py
+        """
+        from aider.refactoring_assistant import RefactoringAssistant
+
+        if not args:
+            self.io.tool_error("Please provide a file path to analyze for refactoring")
+            return
+
+        filepath = args.strip()
+        if not Path(filepath).exists():
+            self.io.tool_error(f"File not found: {filepath}")
+            return
+
+        try:
+            assistant = RefactoringAssistant()
+            report = assistant.generate_refactoring_report(filepath)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"Refactoring Report for {filepath}:", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+            self.io.tool_output(report, log_only=False)
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error generating refactoring suggestions: {e}")
+            audit_logger.error(f"Refactoring analysis failed for {filepath}: {e}")
+
+    def cmd_template(self, args):
+        """
+        Scaffold a new project from a template.
+
+        This command uses the project template manager to create new projects
+        with standardized structures and best practices.
+
+        Args:
+            args (str): Template name and project path (format: <template_name> <project_path>)
+
+        Returns:
+            None: Success/failure message is displayed via tool_output
+
+        Example:
+            /template python-basic ./my_project
+        """
+        from aider.project_templates import ProjectTemplateManager
+
+        if not args:
+            self.io.tool_error("Please provide template name and project path")
+            self.io.tool_error("Usage: /template <template_name> <project_path>")
+            self.io.tool_error("\nAvailable templates:")
+            manager = ProjectTemplateManager()
+            for template in manager.list_templates():
+                self.io.tool_error(f"  - {template.name}: {template.description}")
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            self.io.tool_error("Please provide both template name and project path")
+            self.io.tool_error("Usage: /template <template_name> <project_path>")
+            return
+
+        template_name = parts[0]
+        project_path = parts[1]
+
+        try:
+            manager = ProjectTemplateManager()
+            success = manager.scaffold_project(template_name, project_path)
+
+            if success:
+                self.io.tool_output(f"\n{'='*50}", log_only=False)
+                self.io.tool_output(f"Project scaffolded successfully at {project_path}", log_only=False)
+                self.io.tool_output(f"{'='*50}", log_only=False)
+                self.io.tool_output(f"\nNext steps:", log_only=False)
+                template = manager.get_template(template_name)
+                if template and template.setup_commands:
+                    for cmd in template.setup_commands:
+                        self.io.tool_output(f"  - {cmd}", log_only=False)
+            else:
+                self.io.tool_error(f"Failed to scaffold project")
+
+        except Exception as e:
+            self.io.tool_error(f"Error scaffolding project: {e}")
+            audit_logger.error(f"Project template failed for {template_name}: {e}")
+
+    def cmd_docs(self, args):
+        """
+        Generate documentation for a file.
+
+        This command uses the documentation generator to analyze code
+        and generate comprehensive documentation.
+
+        Args:
+            args (str): File path to generate documentation for
+
+        Returns:
+            None: Documentation is displayed via tool_output
+
+        Example:
+            /docs mymodule.py
+        """
+        from aider.documentation_generator import DocumentationGenerator
+
+        if not args:
+            self.io.tool_error("Please provide a file path to generate documentation for")
+            return
+
+        filepath = args.strip()
+        if not Path(filepath).exists():
+            self.io.tool_error(f"File not found: {filepath}")
+            return
+
+        try:
+            generator = DocumentationGenerator()
+            module_doc = generator.generate_module_doc(filepath)
+
+            if not module_doc:
+                self.io.tool_error(f"Failed to generate documentation for {filepath}")
+                return
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"Documentation for {module_doc.name}:", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+            self.io.tool_output(f"\nDescription: {module_doc.description}", log_only=False)
+
+            if module_doc.functions:
+                self.io.tool_output(f"\n## Functions ({len(module_doc.functions)})", log_only=False)
+                for func in module_doc.functions:
+                    self.io.tool_output(f"\n### {func.signature}", log_only=False)
+                    self.io.tool_output(f"  {func.description}", log_only=False)
+                    if func.parameters:
+                        self.io.tool_output(f"  Parameters:", log_only=False)
+                        for param in func.parameters:
+                            self.io.tool_output(f"    - {param['name']}: {param['type']}", log_only=False)
+                    if func.returns:
+                        self.io.tool_output(f"  Returns: {func.returns}", log_only=False)
+
+            if module_doc.classes:
+                self.io.tool_output(f"\n## Classes ({len(module_doc.classes)})", log_only=False)
+                for cls in module_doc.classes:
+                    self.io.tool_output(f"\n### {cls.name}", log_only=False)
+                    self.io.tool_output(f"  {cls.description}", log_only=False)
+                    if cls.attributes:
+                        self.io.tool_output(f"  Attributes:", log_only=False)
+                        for attr in cls.attributes:
+                            self.io.tool_output(f"    - {attr['name']}: {attr['type']}", log_only=False)
+                    if cls.methods:
+                        self.io.tool_output(f"  Methods:", log_only=False)
+                        for method in cls.methods:
+                            self.io.tool_output(f"    - {method.signature}", log_only=False)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error generating documentation: {e}")
+            audit_logger.error(f"Documentation generation failed for {filepath}: {e}")
+
+    def cmd_search(self, args):
+        """
+        Search for code in the codebase.
+
+        This command uses the code searcher to find functions, classes,
+        and patterns across the codebase.
+
+        Args:
+            args (str): Search type and query (format: <type> <query>)
+
+        Returns:
+            None: Search results are displayed via tool_output
+
+        Example:
+            /search function add
+            /search class Calculator
+            /search pattern "def.*test"
+        """
+        from aider.code_search import CodeSearcher
+
+        if not args:
+            self.io.tool_error("Please provide search type and query")
+            self.io.tool_error("Usage: /search <type> <query>")
+            self.io.tool_error("Search types: function, class, pattern, reference")
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            self.io.tool_error("Please provide both search type and query")
+            self.io.tool_error("Usage: /search <type> <query>")
+            return
+
+        search_type = parts[0]
+        query = parts[1]
+
+        try:
+            searcher = CodeSearcher()
+            
+            # Index the current directory
+            current_dir = Path.cwd()
+            searcher.index_directory(str(current_dir))
+            
+            # Perform search
+            if search_type == "function":
+                results = searcher.search_function(query, fuzzy=True)
+            elif search_type == "class":
+                results = searcher.search_class(query, fuzzy=True)
+            elif search_type == "pattern":
+                results = searcher.search_pattern(query)
+            elif search_type == "reference":
+                results = searcher.search_references(query)
+            else:
+                self.io.tool_error(f"Unknown search type: {search_type}")
+                self.io.tool_error("Search types: function, class, pattern, reference")
+                return
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"Search Results ({len(results)} found):", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+
+            if not results:
+                self.io.tool_output("No results found.", log_only=False)
+            else:
+                for result in results:
+                    self.io.tool_output(f"\n{result.file_path}:{result.line_number}", log_only=False)
+                    self.io.tool_output(f"  Type: {result.type.value}", log_only=False)
+                    if result.name:
+                        self.io.tool_output(f"  Name: {result.name}", log_only=False)
+                    if result.signature:
+                        self.io.tool_output(f"  Signature: {result.signature}", log_only=False)
+                    self.io.tool_output(f"  Context: {result.context[:100]}", log_only=False)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error performing search: {e}")
+            audit_logger.error(f"Code search failed: {e}")
+
+    def cmd_debug(self, args):
+        """
+        Analyze an error message and provide debugging assistance.
+
+        This command uses the debugging assistant to analyze errors,
+        provide explanations, and suggest fixes.
+
+        Args:
+            args (str): Error message to analyze
+
+        Returns:
+            None: Debugging assistance is displayed via tool_output
+
+        Example:
+            /debug "TypeError: 'int' object is not subscriptable"
+        """
+        from aider.debugging_assistant import DebuggingAssistant
+
+        if not args:
+            self.io.tool_error("Please provide an error message to analyze")
+            return
+
+        error_message = args.strip()
+
+        try:
+            assistant = DebuggingAssistant()
+            analysis = assistant.analyze_error(error_message)
+
+            if not analysis:
+                self.io.tool_error("Could not analyze the error message")
+                return
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"Error Analysis:", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+            self.io.tool_output(f"\nError Type: {analysis.error_type.value}", log_only=False)
+            self.io.tool_output(f"Explanation: {analysis.explanation}", log_only=False)
+
+            if analysis.likely_causes:
+                self.io.tool_output(f"\nLikely Causes:", log_only=False)
+                for cause in analysis.likely_causes:
+                    self.io.tool_output(f"  - {cause}", log_only=False)
+
+            if analysis.suggested_fixes:
+                self.io.tool_output(f"\nSuggested Fixes:", log_only=False)
+                for fix in analysis.suggested_fixes:
+                    self.io.tool_output(f"  - {fix}", log_only=False)
+
+            if analysis.debugging_tips:
+                self.io.tool_output(f"\nDebugging Tips:", log_only=False)
+                for tip in analysis.debugging_tips:
+                    self.io.tool_output(f"  - {tip}", log_only=False)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error analyzing error message: {e}")
+            audit_logger.error(f"Debugging assistance failed: {e}")
+
+    def cmd_performance(self, args):
+        """
+        Analyze code performance and detect bottlenecks.
+
+        This command uses the performance analyzer to profile code,
+        detect performance issues, and provide optimization suggestions.
+
+        Args:
+            args (str): File path to analyze
+
+        Returns:
+            None: Performance analysis results are displayed via tool_output
+
+        Example:
+            /performance path/to/file.py
+        """
+        from aider.performance_analyzer import PerformanceAnalyzer
+
+        if not args:
+            self.io.tool_error("Please provide a file path to analyze")
+            return
+
+        filepath = args.strip()
+
+        try:
+            analyzer = PerformanceAnalyzer()
+            issues = analyzer.analyze_file(filepath)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"Performance Analysis:", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+
+            if not issues:
+                self.io.tool_output("No performance issues detected.", log_only=False)
+            else:
+                self.io.tool_output(f"\nFound {len(issues)} performance issues:\n", log_only=False)
+                for issue in issues:
+                    self.io.tool_output(f"[{issue.severity.upper()}] {issue.type.value}", log_only=False)
+                    self.io.tool_output(f"  Location: {issue.location}", log_only=False)
+                    self.io.tool_output(f"  Description: {issue.description}", log_only=False)
+                    self.io.tool_output(f"  Suggestion: {issue.suggestion}", log_only=False)
+                    self.io.tool_output(f"  Potential Improvement: {issue.potential_improvement}", log_only=False)
+                    self.io.tool_output("", log_only=False)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error analyzing performance: {e}")
+            audit_logger.error(f"Performance analysis failed: {e}")
+
+    def cmd_security(self, args):
+        """
+        Scan code for security vulnerabilities.
+
+        This command uses the security scanner to detect security issues,
+        vulnerabilities, and provide remediation recommendations.
+
+        Args:
+            args (str): File path or directory to scan
+
+        Returns:
+            None: Security scan results are displayed via tool_output
+
+        Example:
+            /security path/to/file.py
+            /security path/to/directory
+        """
+        from aider.security_scanner import SecurityScanner
+
+        if not args:
+            self.io.tool_error("Please provide a file path or directory to scan")
+            return
+
+        target = args.strip()
+
+        try:
+            scanner = SecurityScanner()
+
+            if Path(target).is_file():
+                issues = scanner.scan_file(target)
+            else:
+                issues = scanner.scan_directory(target)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"Security Scan:", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+
+            if not issues:
+                self.io.tool_output("No security issues detected.", log_only=False)
+            else:
+                self.io.tool_output(f"\nFound {len(issues)} security issues:\n", log_only=False)
+                for issue in issues:
+                    self.io.tool_output(f"[{issue.severity.upper()}] {issue.type.value}", log_only=False)
+                    self.io.tool_output(f"  Location: {issue.location}", log_only=False)
+                    self.io.tool_output(f"  Description: {issue.description}", log_only=False)
+                    if issue.cwe_id:
+                        self.io.tool_output(f"  CWE: {issue.cwe_id}", log_only=False)
+                    self.io.tool_output(f"  Recommendation: {issue.recommendation}", log_only=False)
+                    self.io.tool_output("", log_only=False)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error scanning for security issues: {e}")
+            audit_logger.error(f"Security scan failed: {e}")
+
+    def cmd_review(self, args):
+        """
+        Perform automated PR review on code changes.
+
+        This command uses the PR reviewer to analyze code changes,
+        detect issues, and provide review suggestions.
+
+        Args:
+            args (str): File path to review
+
+        Returns:
+            None: Review results are displayed via tool_output
+
+        Example:
+            /review path/to/file.py
+        """
+        from aider.pr_reviewer import PRReviewer
+
+        if not args:
+            self.io.tool_error("Please provide a file path to review")
+            return
+
+        filepath = args.strip()
+
+        try:
+            reviewer = PRReviewer()
+            
+            # For simplicity, review the file against an empty baseline
+            # In a real PR context, this would compare old and new versions
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            result = reviewer.review_changes("", content, filepath)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+            self.io.tool_output(f"PR Review:", log_only=False)
+            self.io.tool_output(f"{'='*50}", log_only=False)
+            self.io.tool_output(f"\nReview Score: {result.overall_score}/100", log_only=False)
+            self.io.tool_output(f"Approval Status: {result.approval_status}", log_only=False)
+            self.io.tool_output(f"Summary: {result.summary}", log_only=False)
+
+            if result.issues:
+                self.io.tool_output(f"\nIssues Found: {len(result.issues)}\n", log_only=False)
+                for issue in result.issues:
+                    self.io.tool_output(f"[{issue.severity.upper()}] {issue.type.value}", log_only=False)
+                    self.io.tool_output(f"  Location: {issue.file_path}:{issue.line_number}", log_only=False)
+                    self.io.tool_output(f"  Description: {issue.description}", log_only=False)
+                    self.io.tool_output(f"  Suggestion: {issue.suggestion}", log_only=False)
+                    self.io.tool_output("", log_only=False)
+            else:
+                self.io.tool_output("\nNo issues detected. Great job!", log_only=False)
+
+            self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+        except Exception as e:
+            self.io.tool_error(f"Error performing review: {e}")
+            audit_logger.error(f"PR review failed: {e}")
+
+    def cmd_collaborate(self, args):
+        """
+        Manage collaboration sessions and comments.
+
+        This command uses the collaboration manager to create sessions,
+        add comments, and manage team collaboration.
+
+        Args:
+            args (str): Command and arguments (format: <action> [args])
+
+        Returns:
+            None: Collaboration results are displayed via tool_output
+
+        Example:
+            /collaborate create "Session Name" "user1,user2"
+            /collaborate list
+            /collaborate comment <session_id> <file_path> <line> <comment>
+        """
+        from aider.collaboration import CollaborationManager, CommentType
+
+        if not args:
+            self.io.tool_error("Please provide a collaboration command")
+            self.io.tool_error("Usage: /collaborate <action> [args]")
+            self.io.tool_error("Actions: create, list, comment, stats")
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        action = parts[0]
+        
+        try:
+            manager = CollaborationManager()
+
+            if action == "create":
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /collaborate create <name> <participants>")
+                    return
+                
+                create_args = parts[1].split(maxsplit=1)
+                if len(create_args) < 2:
+                    self.io.tool_error("Usage: /collaborate create <name> <participants>")
+                    return
+                
+                name = create_args[0]
+                participants = create_args[1].split(',')
+                
+                session = manager.create_session(name, participants)
+                
+                self.io.tool_output(f"\n{'='*50}", log_only=False)
+                self.io.tool_output(f"Collaboration Session Created:", log_only=False)
+                self.io.tool_output(f"{'='*50}", log_only=False)
+                self.io.tool_output(f"Session ID: {session.id}", log_only=False)
+                self.io.tool_output(f"Name: {session.name}", log_only=False)
+                self.io.tool_output(f"Participants: {', '.join(session.participants)}", log_only=False)
+                self.io.tool_output(f"{'='*50}", log_only=False)
+
+            elif action == "list":
+                sessions = manager.list_sessions()
+                
+                self.io.tool_output(f"\n{'='*50}", log_only=False)
+                self.io.tool_output(f"Collaboration Sessions:", log_only=False)
+                self.io.tool_output(f"{'='*50}", log_only=False)
+                
+                if not sessions:
+                    self.io.tool_output("No active sessions.", log_only=False)
+                else:
+                    for session in sessions:
+                        self.io.tool_output(f"\nSession: {session.name}", log_only=False)
+                        self.io.tool_output(f"  ID: {session.id}", log_only=False)
+                        self.io.tool_output(f"  Participants: {', '.join(session.participants)}", log_only=False)
+                        self.io.tool_output(f"  Active: {session.active}", log_only=False)
+                        self.io.tool_output(f"  Comments: {len(session.comments)}", log_only=False)
+                
+                self.io.tool_output(f"\n{'='*50}", log_only=False)
+
+            elif action == "stats":
+                stats = manager.get_statistics()
+                
+                self.io.tool_output(f"\n{'='*50}", log_only=False)
+                self.io.tool_output(f"Collaboration Statistics:", log_only=False)
+                self.io.tool_output(f"{'='*50}", log_only=False)
+                self.io.tool_output(f"Total Comments: {stats['total_comments']}", log_only=False)
+                self.io.tool_output(f"Unresolved Comments: {stats['unresolved_comments']}", log_only=False)
+                self.io.tool_output(f"Total Sessions: {stats['total_sessions']}", log_only=False)
+                self.io.tool_output(f"Active Sessions: {stats['active_sessions']}", log_only=False)
+                self.io.tool_output(f"Total Participants: {stats['total_participants']}", log_only=False)
+                self.io.tool_output(f"{'='*50}", log_only=False)
+
+            elif action == "comment":
+                self.io.tool_error("Comment addition requires more parameters. Use the API directly.", log_only=False)
+
+            else:
+                self.io.tool_error(f"Unknown action: {action}")
+                self.io.tool_error("Actions: create, list, comment, stats")
+
+        except Exception as e:
+            self.io.tool_error(f"Error managing collaboration: {e}")
+            audit_logger.error(f"Collaboration management failed: {e}")
 
 
 def expand_subdir(file_path):

@@ -279,6 +279,36 @@ def get_parser(default_config_files, git_root):
         default=2,
         help="Multiplier for map tokens when no files are specified (default: 2)",
     )
+    group.add_argument(
+        "--full-index",
+        action="store_true",
+        default=False,
+        help="Enable full project indexing on startup (default: disabled)",
+    )
+    group.add_argument(
+        "--index-on-start",
+        action="store_true",
+        default=False,
+        help="Alias for --full-index, enable full project indexing on startup",
+    )
+    group.add_argument(
+        "--index-background",
+        action="store_true",
+        default=False,
+        help="Run indexing in background after startup (default: foreground)",
+    )
+    group.add_argument(
+        "--index-threshold",
+        type=int,
+        default=100,
+        help="File count threshold for automatic full indexing (default: 100)",
+    )
+    group.add_argument(
+        "--index-max-memory",
+        type=int,
+        default=2048,
+        help="Maximum memory in MB for indexing (default: 2048)",
+    )
 
     ##########
     group = parser.add_argument_group("History Files")

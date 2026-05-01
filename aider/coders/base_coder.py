@@ -53,6 +53,7 @@ from aider.analytics import Analytics
 from aider.commands import Commands
 from aider.exceptions import LiteLLMExceptions
 from aider.history import ChatSummary
+from aider.index_manager import IndexManager
 from aider.io import ConfirmGroup, InputOutput
 from aider.linter import Linter
 from aider.llm import litellm
@@ -439,6 +440,10 @@ class Coder:
         file_watcher=None,
         auto_copy_context=False,
         auto_accept_architect=True,
+        full_index=False,
+        index_background=False,
+        index_threshold=100,
+        index_max_memory=2048,
     ):
         """
         Initialize the Coder with all necessary components for AI-assisted coding.
@@ -663,6 +668,42 @@ class Coder:
                 map_mul_no_files=map_mul_no_files,
                 refresh=map_refresh,
             )
+
+        # Initialize index manager for aerospace-grade project indexing
+        self.index_manager = None
+        self.full_index = full_index
+        self.index_background = index_background
+        self.index_threshold = index_threshold
+        self.index_max_memory = index_max_memory
+        
+        if self.root:
+            try:
+                self.index_manager = IndexManager(
+                    root=str(self.root),
+                    io=io,
+                    max_memory_mb=index_max_memory,
+                    background=index_background,
+                    verbose=verbose,
+                )
+                
+                # Trigger indexing if configured
+                if full_index:
+                    if index_background:
+                        # Run indexing in background
+                        import threading
+                        index_thread = threading.Thread(
+                            target=self._run_full_index_background,
+                            daemon=True
+                        )
+                        index_thread.start()
+                    else:
+                        # Run indexing in foreground
+                        self._run_full_index_foreground()
+                        
+            except Exception as e:
+                if verbose and self.io:
+                    self.io.tool_warning(f"Failed to initialize index manager: {e}")
+                logger.error(f"Failed to initialize index manager: {e}")
 
         self.summarizer = summarizer or ChatSummary(
             [self.main_model.weak_model, self.main_model],
@@ -1892,6 +1933,53 @@ class Coder:
         
         self.io.tool_output("─" * 60, log_only=False)
         self.io.tool_output("", log_only=False)
+
+    def _run_full_index_foreground(self):
+        """Run full project indexing in foreground."""
+        if not self.index_manager:
+            return
+        
+        try:
+            if self.verbose and self.io:
+                self.io.tool_output("\n" + "─" * 60, log_only=False)
+                self.io.tool_output("🚀 Starting Full Project Index", log_only=False, bold=True)
+                self.io.tool_output("─" * 60, log_only=False)
+            
+            stats = self.index_manager.index_full(force=True)
+            
+            if self.verbose and self.io:
+                if stats.failed_files > 0:
+                    self.io.tool_warning(f"Index completed with {stats.failed_files} errors")
+                else:
+                    self.io.tool_success("Full index completed successfully")
+            
+        except Exception as e:
+            if self.verbose and self.io:
+                self.io.tool_error(f"Full index failed: {e}")
+            logger.error(f"Full index failed: {e}")
+
+    def _run_full_index_background(self):
+        """Run full project indexing in background thread."""
+        if not self.index_manager:
+            return
+        
+        try:
+            stats = self.index_manager.index_full(force=True)
+            
+            if self.io:
+                self.io.tool_output("\n" + "─" * 60, log_only=False)
+                self.io.tool_output("✅ Background Index Complete", log_only=False, bold=True)
+                self.io.tool_output("─" * 60, log_only=False)
+                self.io.tool_output(f"📊 Indexed: {stats.indexed_files} files", log_only=False)
+                if stats.failed_files > 0:
+                    self.io.tool_warning(f"Failed: {stats.failed_files} files", log_only=False)
+                self.io.tool_output("─" * 60, log_only=False)
+                self.io.tool_output("", log_only=False)
+            
+        except Exception as e:
+            if self.io:
+                self.io.tool_error(f"Background index failed: {e}")
+            logger.error(f"Background index failed: {e}")
 
     def reply_completed(self):
         """

@@ -41,20 +41,29 @@ from aider.watch import FileWatcher
 try:
     from aider.integration import initialize_enterprise_features
     _enterprise_features = initialize_enterprise_features()
-except Exception:
+except (ImportError, AttributeError, RuntimeError) as e:
+    # ImportError: integration module not available
+    # AttributeError: initialization function not found
+    # RuntimeError: initialization failed
     # Enterprise features are optional
     _enterprise_features = None
 
 # Logging setup
 import logging
 import sys
+from pathlib import Path
 
-# Configure logging to output to console
+# Configure logging to output to file
+log_dir = Path.home() / ".aider" / "logs"
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / "aider.log"
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
-    stream=sys.stdout
+    filename=log_file,
+    filemode='a'
 )
 
 logger = logging.getLogger(__name__)
@@ -74,7 +83,10 @@ def check_config_files_for_yes(config_files):
                             print(f"The file {config_file} contains a line starting with 'yes:'")
                             print("Please replace 'yes:' with 'yes-always:' in this file.")
                             found = True
-            except Exception:
+            except (OSError, IOError, UnicodeDecodeError) as e:
+                # OSError: file system errors
+                # IOError: I/O errors
+                # UnicodeDecodeError: encoding errors
                 pass
     return found
 
@@ -368,7 +380,11 @@ def register_models(git_root, model_settings_fname, io, verbose=False):
                     io.tool_output(f"  - {file_loaded}")  # noqa: E221
         elif verbose:
             io.tool_output("No model settings files loaded")
-    except Exception as e:
+    except (OSError, IOError, ValueError, yaml.YAMLError) as e:
+        # OSError: file system errors
+        # IOError: I/O errors
+        # ValueError: invalid configuration values
+        # YAMLError: YAML parsing errors
         logger.error(f"Error loading aider model settings: {e}")
         logger.error(traceback.format_exc())
         io.tool_error(f"Error loading aider model settings: {e}")
@@ -406,7 +422,9 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
                 loaded.append(fname)
         except OSError as e:
             print(f"OSError loading {fname}: {e}")
-        except Exception as e:
+        except (ValueError, UnicodeDecodeError) as e:
+            # ValueError: invalid dotenv format
+            # UnicodeDecodeError: encoding errors
             logger.error(f"Error loading dotenv file {fname}: {e}")
             logger.debug(traceback.format_exc())
             print(f"Error loading {fname}: {e}")
@@ -430,7 +448,11 @@ def register_litellm_models(git_root, model_metadata_fname, io, verbose=False):
             io.tool_output("Loaded model metadata from:")
             for model_metadata_file in model_metadata_files_loaded:
                 io.tool_output(f"  - {model_metadata_file}")  # noqa: E221
-    except Exception as e:
+    except (OSError, IOError, ValueError, json.JSONDecodeError) as e:
+        # OSError: file system errors
+        # IOError: I/O errors
+        # ValueError: invalid metadata values
+        # JSONDecodeError: JSON parsing errors
         logger.error(f"Error loading model metadata models: {e}")
         logger.error(traceback.format_exc())
         io.tool_error(f"Error loading model metadata models: {e}")
@@ -585,7 +607,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         args.user_input_color = "green"
         args.tool_error_color = "red"
         args.tool_warning_color = "#FFA500"
-        args.assistant_output_color = "blue"
+        args.assistant_output_color = "#FFFFE0"
         args.code_theme = "default"
 
     if return_coder and args.yes_always is None:
@@ -1049,6 +1071,10 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             suggest_shell_commands=args.suggest_shell_commands,
             chat_language=args.chat_language,
             commit_language=args.commit_language,
+            full_index=args.full_index or args.index_on_start,
+            index_background=args.index_background,
+            index_threshold=args.index_threshold,
+            index_max_memory=args.index_max_memory,
             detect_urls=args.detect_urls,
             auto_copy_context=args.copy_paste,
             auto_accept_architect=args.auto_accept_architect,
@@ -1063,6 +1089,28 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         io.tool_error(str(err))
         analytics.event("exit", reason="ValueError during coder creation")
         return 1
+
+    # Generate project index at startup
+    if repo and not args.exit:
+        try:
+            logger.info("Generating project index at startup")
+            project_name = Path(git_root).name if git_root else Path.cwd().name
+            io.tool_output(f"Generating project index for '{project_name}'...")
+            # Force repo-map generation
+            coder.get_repo_map()
+            io.tool_output(f"Project index generated successfully for '{project_name}'.")
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.warning(f"Failed to generate project index (data error): {e}")
+            io.tool_warning(f"Failed to generate project index: {e}")
+            io.tool_output("Continuing without index generation...")
+        except (OSError, IOError) as e:
+            logger.warning(f"Failed to generate project index (I/O error): {e}")
+            io.tool_warning(f"Failed to generate project index due to I/O error: {e}")
+            io.tool_output("Continuing without index generation...")
+        except Exception as e:
+            logger.warning(f"Failed to generate project index at startup: {e}")
+            io.tool_warning(f"Failed to generate project index: {e}")
+            io.tool_output("Continuing without index generation...")
 
     if return_coder:
         analytics.event("exit", reason="Returning coder object")
