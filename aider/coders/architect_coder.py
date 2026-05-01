@@ -34,6 +34,18 @@ class ArchitectCoder(AskCoder):
             self.io.tool_info("Review the plan above before proceeding", log_only=False)
             self.io.tool_output("", log_only=False)
 
+        # Show work results summary
+        if self.io.pretty:
+            self.io.tool_output("─" * 60, log_only=False)
+            self.io.tool_output("📊 Phase Results Summary", log_only=False, bold=True)
+            self.io.tool_output("─" * 60, log_only=False)
+            self.io.tool_output("✅ Planning phase completed successfully", log_only=False)
+            self.io.tool_output("   • Plan generated and ready for review", log_only=False)
+            self.io.tool_output("   • No files modified yet", log_only=False)
+            self.io.tool_output("   • Awaiting user confirmation to proceed", log_only=False)
+            self.io.tool_output("─" * 60, log_only=False)
+            self.io.tool_output("", log_only=False)
+
         if not self.auto_accept_architect and not self.io.confirm_ask("Proceed with the planned changes?"):
             self.io.tool_output("─" * 60, log_only=False)
             self.io.tool_warning("Plan cancelled. No files were modified.", log_only=False)

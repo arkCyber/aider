@@ -1202,12 +1202,27 @@ class Coder:
         self.done_messages += self.cur_messages
         self.summarize_start()
 
-        # TODO check for impact on image messages
+        # Check for image messages in cur_messages to preserve them
+        # Image messages are typically in the format: {"type": "image_url", ...}
+        image_messages = []
+        for msg in self.cur_messages:
+            if isinstance(msg.get("content"), list):
+                # Check if content contains image_url type
+                for content_item in msg["content"]:
+                    if isinstance(content_item, dict) and content_item.get("type") == "image_url":
+                        image_messages.append(msg)
+                        break
+
         if message:
             self.done_messages += [
                 dict(role="user", content=message),
                 dict(role="assistant", content="Ok."),
             ]
+
+        # Preserve image messages in done_messages for context
+        if image_messages:
+            self.done_messages += image_messages
+
         self.cur_messages = []
 
     def normalize_language(self, lang_code):
@@ -1459,10 +1474,49 @@ class Coder:
         chunks.cur = list(self.cur_messages)
         chunks.reminder = []
 
-        # TODO review impact of token count on image messages
-        messages_tokens = self.main_model.token_count(chunks.all_messages())
-        reminder_tokens = self.main_model.token_count(reminder_message)
-        cur_tokens = self.main_model.token_count(chunks.cur)
+        # Account for image messages in token counting
+        # Image messages are typically counted as a fixed number of tokens
+        def count_tokens_with_images(messages):
+            if not messages:
+                return 0
+            total_tokens = 0
+            for msg in messages:
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    # Check if this is a multimodal message with images
+                    has_image = any(
+                        isinstance(item, dict) and item.get("type") == "image_url"
+                        for item in content
+                    )
+                    if has_image:
+                        # Count text tokens + fixed image token cost
+                        text_content = " ".join(
+                            item.get("text", "")
+                            for item in content
+                            if isinstance(item, dict) and item.get("type") == "text"
+                        )
+                        text_tokens = self.main_model.token_count(text_content) if text_content else 0
+                        # Image messages typically cost ~85-565 tokens depending on resolution
+                        # Using a conservative estimate of 465 tokens per image
+                        image_tokens = sum(
+                            465
+                            for item in content
+                            if isinstance(item, dict) and item.get("type") == "image_url"
+                        )
+                        total_tokens += text_tokens + image_tokens
+                    else:
+                        # Regular text-only message
+                        total_tokens += self.main_model.token_count(messages) or 0
+                        break  # token_count handles the whole message list
+                else:
+                    # Simple string content
+                    total_tokens += self.main_model.token_count(messages) or 0
+                    break  # token_count handles the whole message list
+            return total_tokens if total_tokens > 0 else self.main_model.token_count(messages)
+
+        messages_tokens = count_tokens_with_images(chunks.all_messages())
+        reminder_tokens = count_tokens_with_images(reminder_message)
+        cur_tokens = count_tokens_with_images(chunks.cur)
 
         if None not in (messages_tokens, reminder_tokens, cur_tokens):
             total_tokens = messages_tokens + reminder_tokens + cur_tokens
@@ -1788,6 +1842,17 @@ class Coder:
                     return
 
     def reply_completed(self):
+        """
+        Called when the AI has completed its reply.
+        
+        This method can be overridden by subclasses to display
+        phase-specific work results or perform other completion actions.
+        
+        Override in subclasses to:
+        - Display phase completion messages
+        - Show work results
+        - Trigger next phase actions
+        """
         pass
 
     def show_exhausted_error(self):

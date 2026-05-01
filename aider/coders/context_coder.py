@@ -32,9 +32,29 @@ class ContextCoder(Coder):
         self.repo_map.map_mul_no_files = 1.0
 
     def reply_completed(self):
+        """
+        Called when the AI has completed identifying files to edit.
+        
+        This method displays the phase results showing which files
+        were identified for editing.
+        """
         content = self.partial_response_content
         if not content or not content.strip():
             return True
+
+        # Show phase results summary
+        if self.io.pretty:
+            current_rel_fnames = set(self.get_inchat_relative_files())
+            mentioned_rel_fnames = set(self.get_file_mentions(content, ignore_current=True))
+            
+            self.io.tool_output("\n" + "─" * 60, log_only=False)
+            self.io.tool_output("📊 Phase Results Summary", log_only=False, bold=True)
+            self.io.tool_output("─" * 60, log_only=False)
+            self.io.tool_output("✅ File identification phase completed", log_only=False)
+            self.io.tool_output(f"   • Files in chat: {len(current_rel_fnames)}", log_only=False)
+            self.io.tool_output(f"   • Files identified: {len(mentioned_rel_fnames)}", log_only=False)
+            self.io.tool_output("─" * 60, log_only=False)
+            self.io.tool_output("", log_only=False)
 
         # dump(repr(content))
         current_rel_fnames = set(self.get_inchat_relative_files())
