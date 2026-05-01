@@ -519,6 +519,9 @@ class Coder:
         # Initialize reasoning content tracking attributes
         self.got_reasoning_content = False
         self.ended_reasoning_content = False
+        self.reasoning_content_length = 0
+        self.reasoning_start_time = None
+        self.reasoning_end_time = None
 
         if not fnames:
             fnames = []
@@ -2062,6 +2065,9 @@ class Coder:
     def send(self, messages, model=None, functions=None):
         self.got_reasoning_content = False
         self.ended_reasoning_content = False
+        self.reasoning_content_length = 0
+        self.reasoning_start_time = None
+        self.reasoning_end_time = None
 
         if not model:
             model = self.main_model
@@ -2216,9 +2222,17 @@ class Coder:
                     text += f"<{REASONING_TAG}>\n\n"
                     # Show visual indicator that reasoning has started
                     if self.show_pretty():
-                        self.io.tool_output("\n🧠 AI is thinking...", log_only=False)
+                        import time
+                        self.reasoning_start_time = time.time()
+                        self.io.tool_output("\n" + "─" * 60, log_only=False)
+                        self.io.tool_output("🧠 AI Reasoning Process", log_only=False, bold=True)
+                        self.io.tool_output("─" * 60, log_only=False)
+                        self.io.tool_output("AI is analyzing and thinking about the request...", log_only=False)
+                        self.io.tool_output("─" * 60, log_only=False)
+                        self.io.tool_output("", log_only=False)
                 text += reasoning_content
                 self.got_reasoning_content = True
+                self.reasoning_content_length += len(reasoning_content)
                 received_content = True
 
             try:
@@ -2229,7 +2243,20 @@ class Coder:
                         self.ended_reasoning_content = True
                         # Show visual indicator that reasoning has ended
                         if self.show_pretty():
-                            self.io.tool_output("✓ Thinking complete", log_only=False)
+                            import time
+                            self.reasoning_end_time = time.time()
+                            reasoning_duration = self.reasoning_end_time - self.reasoning_start_time if self.reasoning_start_time else 0
+                            reasoning_lines = len(self.partial_response_content.splitlines()) if self.partial_response_content else 0
+                            
+                            self.io.tool_output("─" * 60, log_only=False)
+                            self.io.tool_output("✓ Reasoning complete", log_only=False)
+                            self.io.tool_output("─" * 60, log_only=False)
+                            self.io.tool_output(f"📊 Reasoning Statistics:", log_only=False)
+                            self.io.tool_output(f"   • Duration: {reasoning_duration:.2f} seconds", log_only=False)
+                            self.io.tool_output(f"   • Content length: {self.reasoning_content_length} characters", log_only=False)
+                            self.io.tool_output(f"   • Lines generated: {reasoning_lines}", log_only=False)
+                            self.io.tool_output("─" * 60, log_only=False)
+                            self.io.tool_output("", log_only=False)
 
                     text += content
                     received_content = True
