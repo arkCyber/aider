@@ -3525,6 +3525,8 @@ theme:
             - multi-edit <json_edits>: Edit multiple files at once (JSON format)
             - extract <file_path> <start_line> <end_line> <function_name>: Extract code into function
             - clean <file_path>: Clean up code formatting and imports
+            - quality <file_path>: Analyze code quality metrics
+            - analyze <file_path>: Start real-time code analysis
             
         Args:
             args: Refactoring command in format "<command> [args]"
@@ -3668,9 +3670,47 @@ theme:
                     for error in results['errors']:
                         self.io.tool_output(f"    • {error}", log_only=False)
             
+            elif command == 'quality':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /refactor quality <file_path>")
+                    return
+                
+                file_path = parts[1]
+                results = self.coder.index_manager.analyze_code_quality(file_path)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Quality analysis failed: {results.get('error', 'Unknown error')}")
+                    return
+                
+                metrics = results['metrics']
+                self.io.tool_output(f"\n📊 Code quality metrics for {results['file_path']}:", log_only=False)
+                self.io.tool_output(f"  Total lines: {metrics['total_lines']}", log_only=False)
+                self.io.tool_output(f"  Code lines: {metrics['code_lines']}", log_only=False)
+                self.io.tool_output(f"  Comment lines: {metrics['comment_lines']}", log_only=False)
+                self.io.tool_output(f"  Blank lines: {metrics['blank_lines']}", log_only=False)
+                self.io.tool_output(f"  Complexity: {metrics['complexity']}", log_only=False)
+                self.io.tool_output(f"  Comment ratio: {metrics['comment_ratio']:.2%}", log_only=False)
+            
+            elif command == 'analyze':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /refactor analyze <file_path>")
+                    return
+                
+                file_path = parts[1]
+                results = self.coder.index_manager.start_real_time_analysis(file_path)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Real-time analysis failed: {results.get('error', 'Unknown error')}")
+                    return
+                
+                self.io.tool_output(f"\n🔍 Real-time analysis:", log_only=False)
+                self.io.tool_output(f"  File: {results['file_path']}", log_only=False)
+                self.io.tool_output(f"  Status: {results['status']}", log_only=False)
+                self.io.tool_output(f"  {results['message']}", log_only=False)
+            
             else:
                 self.io.tool_error(f"Unknown command: {command}")
-                self.io.tool_output("Available commands: rename, batch, multi-edit, extract, clean", log_only=False)
+                self.io.tool_output("Available commands: rename, batch, multi-edit, extract, clean, quality, analyze", log_only=False)
                 self.log_command_end("cmd_refactor", "error", f"Unknown command: {command}")
                 return
             
@@ -3736,6 +3776,88 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
         self.io.tool_output("\n💡 Install: pip install bandit safety", log_only=False)
+
+    def cmd_collaborate(self, args):
+        """
+        Enable real-time collaboration features.
+        
+        This command provides collaboration capabilities similar to Cursor,
+        enabling real-time collaboration on code with other developers.
+        
+        Subcommands:
+            - enable [project_id]: Enable collaboration for a project
+            - disable: Disable collaboration features
+            - status: Show collaboration status
+            
+        Args:
+            args: Collaboration command in format "<command> [args]"
+            
+        Examples:
+            /collaborate enable my_project
+            /collaborate status
+        """
+        self.log_command_start("cmd_collaborate", args)
+        
+        parts = args.strip().split()
+        
+        if not parts:
+            self.io.tool_error("Usage: /collaborate <command> [args]")
+            self.io.tool_error("Commands: enable, disable, status")
+            self.log_command_end("cmd_collaborate", "error", "No arguments provided")
+            return
+        
+        command = parts[0].lower()
+        
+        # Check if index manager is available
+        if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+            self.io.tool_error("Index manager not available. Run /index first.")
+            self.log_command_end("cmd_collaborate", "error", "Index manager not available")
+            return
+        
+        self.io.tool_output(f"🤝 Collaboration: {command}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if command == 'enable':
+                project_id = parts[1] if len(parts) > 1 else None
+                
+                results = self.coder.index_manager.enable_collaboration(project_id)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Failed to enable collaboration: {results.get('error', 'Unknown error')}")
+                    self.log_command_end("cmd_collaborate", "error", str(results.get('error')))
+                    return
+                
+                self.io.tool_output(f"\n✓ Collaboration enabled", log_only=False)
+                self.io.tool_output(f"  Project ID: {results['project_id']}", log_only=False)
+                self.io.tool_output(f"  Status: {results['status']}", log_only=False)
+                self.io.tool_output(f"\n  Features:", log_only=False)
+                for feature in results['features']:
+                    self.io.tool_output(f"    • {feature}", log_only=False)
+            
+            elif command == 'disable':
+                self.io.tool_output(f"\n✓ Collaboration disabled", log_only=False)
+                self.io.tool_output(f"  Note: This is a placeholder implementation", log_only=False)
+            
+            elif command == 'status':
+                self.io.tool_output(f"\n📊 Collaboration Status:", log_only=False)
+                self.io.tool_output(f"  Status: Enabled", log_only=False)
+                self.io.tool_output(f"  Active users: 1", log_only=False)
+                self.io.tool_output(f"  Note: This is a placeholder implementation", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_output("Available commands: enable, disable, status", log_only=False)
+                self.log_command_end("cmd_collaborate", "error", f"Unknown command: {command}")
+                return
+            
+            self.log_command_end("cmd_collaborate", "success", f"Command {command} completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_collaborate", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
 
     def cmd_env(self, args):
         "Manage virtual environments"
@@ -4423,6 +4545,8 @@ theme:
             - goto <symbol_name> [file]: Jump to symbol definition
             - hierarchy <file_path>: Get symbol hierarchy for a file
             - structure: Get project file structure
+            - explain <file_path> [symbol]: Explain code using AI
+            - docs <file_path>: Generate documentation for a file
             
         Args:
             args: Search command in format "<command> [args]"
@@ -4589,9 +4713,46 @@ theme:
                     for file_info in structure['files'][:20]:
                         self.io.tool_output(f"    • {file_info['path']} ({file_info['size']} bytes)", log_only=False)
             
+            elif command == 'explain':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /search explain <file_path> [symbol]")
+                    return
+                
+                file_path = parts[1]
+                symbol_name = parts[2] if len(parts) > 2 else None
+                
+                results = self.coder.index_manager.explain_code(file_path, symbol_name)
+                
+                if not results['success']:
+                    self.io.tool_output(f"\n✗ Code explanation failed: {results.get('error', 'Unknown error')}", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📝 Code explanation for {results['file_path']}", log_only=False)
+                    if results['symbol_name']:
+                        self.io.tool_output(f"  Symbol: {results['symbol_name']}", log_only=False)
+                    self.io.tool_output(f"\n{results['explanation']}", log_only=False)
+            
+            elif command == 'docs':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /search docs <file_path>")
+                    return
+                
+                file_path = parts[1]
+                results = self.coder.index_manager.generate_documentation(file_path)
+                
+                if not results['success']:
+                    self.io.tool_output(f"\n✗ Documentation generation failed: {results.get('error', 'Unknown error')}", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📚 Documentation for {results['file_path']}", log_only=False)
+                    self.io.tool_output(f"  Symbols documented: {results['symbols_documented']}", log_only=False)
+                    
+                    if self.verbose:
+                        for doc in results['documentation'][:10]:
+                            self.io.tool_output(f"\n  {doc['kind'].capitalize()}: {doc['name']} (line {doc['line']})", log_only=False)
+                            self.io.tool_output(f"  {doc['documentation'][:200]}...", log_only=False)
+            
             else:
                 self.io.tool_error(f"Unknown command: {command}")
-                self.io.tool_output("Available commands: symbol, reference, file, semantic, goto, hierarchy, structure", log_only=False)
+                self.io.tool_output("Available commands: symbol, reference, file, semantic, goto, hierarchy, structure, explain, docs", log_only=False)
                 self.log_command_end("cmd_search", "error", f"Unknown command: {command}")
                 return
             
