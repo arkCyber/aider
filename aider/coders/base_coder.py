@@ -1805,6 +1805,11 @@ class Coder:
 
         if edited:
             self.aider_edited_files.update(edited)
+            
+            # Display detailed work completed information
+            if self.io.pretty:
+                self._show_work_completed_details(edited)
+            
             saved_message = self.auto_commit(edited)
 
             if not saved_message and hasattr(self.gpt_prompts, "files_content_gpt_edits_no_repo"):
@@ -1840,6 +1845,50 @@ class Coder:
                 if ok:
                     self.reflected_message = test_errors
                     return
+
+    def _show_work_completed_details(self, edited):
+        """
+        Display detailed information about completed work.
+        
+        This method shows specific details about what work was completed,
+        including files modified, changes made, and statistics.
+        
+        Args:
+            edited (set): Set of file paths that were edited
+        """
+        self.io.tool_output("\n" + "─" * 60, log_only=False)
+        self.io.tool_output("✅ Work Completed", log_only=False, bold=True)
+        self.io.tool_output("─" * 60, log_only=False)
+        
+        # Display files modified
+        self.io.tool_output(f"📝 Files modified: {len(edited)}", log_only=False)
+        
+        # Get detailed information for each file
+        for i, fname in enumerate(sorted(edited), 1):
+            rel_fname = self.get_rel_fname(fname)
+            try:
+                content = self.io.read_text(fname)
+                if content:
+                    lines = len(content.splitlines())
+                    chars = len(content)
+                    words = len(content.split())
+                    self.io.tool_output(f"  {i}. 📄 `{rel_fname}`", log_only=False)
+                    self.io.tool_output(f"     • Lines: {lines}", log_only=False)
+                    self.io.tool_output(f"     • Characters: {chars}", log_only=False)
+                    self.io.tool_output(f"     • Words: {words}", log_only=False)
+            except Exception:
+                self.io.tool_output(f"  {i}. 📄 `{rel_fname}`", log_only=False)
+                self.io.tool_output(f"     • Unable to read file details", log_only=False)
+        
+        # Display session statistics
+        total_edited_files = len(self.aider_edited_files)
+        self.io.tool_output("", log_only=False)
+        self.io.tool_output(f"📊 Session Statistics:", log_only=False)
+        self.io.tool_output(f"   • Total files edited this session: {total_edited_files}", log_only=False)
+        self.io.tool_output(f"   • Files edited in this operation: {len(edited)}", log_only=False)
+        
+        self.io.tool_output("─" * 60, log_only=False)
+        self.io.tool_output("", log_only=False)
 
     def reply_completed(self):
         """
