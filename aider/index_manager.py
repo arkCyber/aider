@@ -230,6 +230,32 @@ class IndexManager:
                 )
             """)
             
+            # Create git_history table for Git integration
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS git_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    commit_sha TEXT UNIQUE,
+                    parent_sha TEXT,
+                    commit_message TEXT,
+                    author TEXT,
+                    commit_time REAL,
+                    branch TEXT
+                )
+            """)
+            
+            # Create git_file_history table for file-level history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS git_file_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    commit_sha TEXT,
+                    file_path TEXT,
+                    file_hash TEXT,
+                    change_type TEXT,
+                    FOREIGN KEY (commit_sha) REFERENCES git_history(commit_sha),
+                    UNIQUE(commit_sha, file_path)
+                )
+            """)
+            
             # Create indexes for better query performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path)")
@@ -237,6 +263,9 @@ class IndexManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_references_from ON references(from_file)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(content_hash)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_history_sha ON git_history(commit_sha)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_file_history_sha ON git_file_history(commit_sha)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_file_history_file ON git_file_history(file_path)")
             
             # Create metadata table
             cursor.execute("""
@@ -677,6 +706,14 @@ class IndexManager:
                     self.stats.failed_files += 1
                     if error:
                         self.stats.errors.append(error)
+            
+            # Index Git history
+            if self.verbose and self.io:
+                self.io.tool_output("\n" + "─" * 60, log_only=False)
+                self.io.tool_output("📚 Indexing Git history...", log_only=False, bold=True)
+                self.io.tool_output("─" * 60, log_only=False)
+            
+            self._index_git_history()
             
             # Validate index
             self.status = IndexStatus.VALIDATING
@@ -1407,6 +1444,161 @@ class IndexManager:
             files.update(self._get_all_files_from_tree(child))
         
         return files
+    
+    def _index_git_history(self) -> None:
+        """
+        Index Git history for understanding code evolution.
+        
+        This method indexes Git commits and file changes similar to Cursor's
+        approach to provide historical context for code understanding.
+        """
+        try:
+            import subprocess
+            
+            # Check if we're in a Git repository
+            if not (self.root / '.git').exists():
+                logger.debug("Not a Git repository, skipping Git history indexing")
+                return
+            
+            # Get recent commits (last 100)
+            result = subprocess.run(
+                ['git', 'log', '-100', '--pretty=format:%H|%P|%an|%ai|%s'],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                logger.warning("Failed to get Git log")
+                return
+            
+            commits = result.stdout.strip().split('\n') if result.stdout.strip() else []
+            
+            if not commits:
+                logger.debug("No commits found")
+                return
+            
+            conn = None
+            try:
+                conn = sqlite3.connect(str(self.index_db_path))
+                cursor = conn.cursor()
+                
+                for commit_line in commits:
+                    parts = commit_line.split('|')
+                    if len(parts) < 5:
+                        continue
+                    
+                    commit_sha, parent_sha, author, commit_time, message = parts[:5]
+                    
+                    # Store commit
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO git_history 
+                        (commit_sha, parent_sha, commit_message, author, commit_time)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (commit_sha, parent_sha, message, author, commit_time))
+                    
+                    # Get files changed in this commit
+                    files_result = subprocess.run(
+                        ['git', 'diff-tree', '--name-status', '-r', commit_sha],
+                        cwd=self.root,
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    
+                    if files_result.returncode == 0:
+                        for file_line in files_result.stdout.strip().split('\n'):
+                            if not file_line:
+                                continue
+                            
+                            file_parts = file_line.split('\t', 1)
+                            if len(file_parts) < 2:
+                                continue
+                            
+                            change_type, file_path = file_parts[:2]
+                            
+                            # Get file hash at this commit
+                            file_hash_result = subprocess.run(
+                                ['git', 'ls-tree', commit_sha, file_path],
+                                cwd=self.root,
+                                capture_output=True,
+                                text=True,
+                                timeout=30
+                            )
+                            
+                            file_hash = None
+                            if file_hash_result.returncode == 0:
+                                # Parse the ls-tree output to get the blob hash
+                                ls_parts = file_hash_result.stdout.strip().split()
+                                if len(ls_parts) >= 3:
+                                    file_hash = ls_parts[2]
+                            
+                            # Store file history
+                            cursor.execute("""
+                                INSERT OR REPLACE INTO git_file_history
+                                (commit_sha, file_path, file_hash, change_type)
+                                VALUES (?, ?, ?, ?)
+                            """, (commit_sha, file_path, file_hash, change_type))
+                
+                conn.commit()
+                logger.info(f"Indexed {len(commits)} Git commits")
+                
+            except Exception as e:
+                logger.error(f"Error indexing Git history: {e}")
+            finally:
+                if conn:
+                    conn.close()
+                    
+        except subprocess.TimeoutExpired:
+            logger.warning("Git history indexing timed out")
+        except FileNotFoundError:
+            logger.debug("Git not found, skipping Git history indexing")
+        except Exception as e:
+            logger.error(f"Error in Git history indexing: {e}")
+    
+    def get_file_history(self, file_path: str, limit: int = 10) -> List[Dict]:
+        """
+        Get Git history for a specific file.
+        
+        Args:
+            file_path: Path to the file
+            limit: Maximum number of history entries to return
+            
+        Returns:
+            List of history entries with commit information
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT gh.commit_sha, gh.parent_sha, gh.commit_message, 
+                       gh.author, gh.commit_time, gfh.change_type
+                FROM git_file_history gfh
+                JOIN git_history gh ON gfh.commit_sha = gh.commit_sha
+                WHERE gfh.file_path = ?
+                ORDER BY gh.commit_time DESC
+                LIMIT ?
+            """, (file_path, limit))
+            
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'commit_sha': row[0],
+                    'parent_sha': row[1],
+                    'commit_message': row[2],
+                    'author': row[3],
+                    'commit_time': row[4],
+                    'change_type': row[5]
+                })
+            
+            conn.close()
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error getting file history: {e}")
+            return []
     
     def cleanup(self) -> None:
         """
