@@ -488,15 +488,32 @@ class IndexManager:
             if conn:
                 conn.close()
     
-    def _add_symbol(self, cursor, file_path: str, name: str, kind: str, line: int):
-        """Add a symbol to the database."""
+    def _add_symbol(self, cursor, file_path: str, name: str, kind: str, line: int) -> None:
+        """
+        Add a symbol to the database.
+        
+        Args:
+            cursor: Database cursor
+            file_path: Path to the file containing the symbol
+            name: Symbol name
+            kind: Symbol kind (function, class, variable, etc.)
+            line: Line number where symbol is defined
+        """
         cursor.execute(
             "INSERT OR REPLACE INTO symbols (file_path, name, kind, line) VALUES (?, ?, ?, ?)",
             (file_path, name, kind, line)
         )
     
-    def _record_file_metadata(self, filepath: Path, size: int, mtime: float, file_hash: str):
-        """Record file metadata to the database."""
+    def _record_file_metadata(self, filepath: Path, size: int, mtime: float, file_hash: str) -> None:
+        """
+        Record file metadata to the database.
+        
+        Args:
+            filepath: Path to the file
+            size: File size in bytes
+            mtime: File modification time
+            file_hash: Hash of file content for change detection
+        """
         conn = None
         try:
             conn = sqlite3.connect(str(self.index_db_path))
@@ -522,7 +539,7 @@ class IndexManager:
             directory: Directory to scan
             
         Returns:
-            List of file paths
+            List of file paths to index
         """
         files = []
         
@@ -553,10 +570,10 @@ class IndexManager:
         Perform full project indexing.
         
         Args:
-            force: Force re-indexing of all files
+            force: Force re-indexing of all files regardless of state
             
         Returns:
-            Index statistics
+            IndexStats object containing indexing statistics and results
         """
         logger.info(f"Starting full index of {self.root}")
         
@@ -897,7 +914,14 @@ class IndexManager:
             if conn:
                 conn.close()
     
-    def cleanup(self):
-        """Clean up resources."""
+    def cleanup(self) -> None:
+        """
+        Clean up resources and cancel ongoing operations.
+        
+        This method ensures proper cleanup of resources including:
+        - Canceling any ongoing indexing operations
+        - Closing database connections
+        - Stopping background threads
+        """
         self.cancel()
         logger.info("IndexManager cleaned up")
