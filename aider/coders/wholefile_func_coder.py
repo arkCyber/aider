@@ -85,16 +85,27 @@ class WholeFileFunctionCoder(Coder):
 
         res = ""
         if explanation:
-            # Add visual indicator for planning content
-            res += "📋 **Plan:**\n\n"
+            # Add visual indicator for planning content with better formatting
+            res += "\n"
+            res += "─" * 60 + "\n"
+            res += "📋 **PLAN OVERVIEW**\n"
+            res += "─" * 60 + "\n\n"
             res += f"{explanation}\n\n"
 
-        # Show files to be modified
+        # Show files to be modified with better visuals
         if files:
-            res += "**Files to modify:**\n\n"
+            res += "─" * 60 + "\n"
+            res += "📝 **FILES TO MODIFY**\n"
+            res += "─" * 60 + "\n\n"
+            
             total_files = len(files)
             total_lines = sum(len(file_upd.get("content", "").splitlines()) for file_upd in files)
-            res += f"Total: {total_files} file(s), approximately {total_lines} line(s)\n\n"
+            total_chars = sum(len(file_upd.get("content", "")) for file_upd in files)
+            
+            res += f"📊 **Summary:** {total_files} file(s) to be modified\n"
+            res += f"   • Total lines: approximately {total_lines}\n"
+            res += f"   • Total characters: {total_chars}\n\n"
+            res += "─" * 60 + "\n\n"
             
             for i, file_upd in enumerate(files, 1):
                 path = file_upd.get("path")
@@ -103,8 +114,14 @@ class WholeFileFunctionCoder(Coder):
                 content = file_upd.get("content")
                 if content:
                     line_count = len(content.splitlines())
-                    res += f"{i}. `{path}` ({line_count} line(s))\n"
-            res += "\n"
+                    char_count = len(content)
+                    file_size_kb = char_count / 1024
+                    res += f"**{i}.** 📄 `{path}`\n"
+                    res += f"   • Lines: {line_count}\n"
+                    res += f"   • Characters: {char_count}\n"
+                    res += f"   • Size: ~{file_size_kb:.2f} KB\n\n"
+            
+            res += "─" * 60 + "\n\n"
 
         for i, file_upd in enumerate(files):
             path = file_upd.get("path")

@@ -111,25 +111,38 @@ class EditBlockFunctionCoder(Coder):
         if explanation or edits:
             res = ""
             if explanation:
-                # Add visual indicator for planning content
-                res += "📋 **Plan:**\n\n"
+                # Add visual indicator for planning content with better formatting
+                res += "\n"
+                res += "─" * 60 + "\n"
+                res += "📋 **PLAN OVERVIEW**\n"
+                res += "─" * 60 + "\n\n"
                 res += f"{explanation}\n\n"
             
-            # Show edits in a readable format
+            # Show edits in a readable format with better visuals
             if edits:
-                res += "**Files to modify:**\n\n"
+                res += "─" * 60 + "\n"
+                res += "📝 **FILES TO MODIFY**\n"
+                res += "─" * 60 + "\n\n"
+                
                 total_files = len(edits)
-                total_lines = sum(len(edit.get("original_lines", [])) for edit in edits)
-                res += f"Total: {total_files} file(s), {total_lines} line(s) to be modified\n\n"
+                total_original_lines = sum(len(edit.get("original_lines", [])) for edit in edits)
+                total_updated_lines = sum(len(edit.get("updated_lines", [])) for edit in edits)
+                
+                res += f"📊 **Summary:** {total_files} file(s) to be modified\n"
+                res += f"   • {total_original_lines} line(s) will be replaced\n"
+                res += f"   • {total_updated_lines} line(s) will be added\n\n"
+                res += "─" * 60 + "\n\n"
                 
                 for i, edit in enumerate(edits, 1):
                     path = edit.get("path", "unknown")
                     original_lines = edit.get("original_lines", [])
                     updated_lines = edit.get("updated_lines", [])
-                    res += f"{i}. `{path}`\n"
-                    if original_lines:
-                        res += f"   - Replace {len(original_lines)} line(s) with {len(updated_lines)} line(s)\n"
-                    res += "\n"
+                    res += f"**{i}.** 📄 `{path}`\n"
+                    res += f"   • Original: {len(original_lines)} line(s)\n"
+                    res += f"   • Updated:  {len(updated_lines)} line(s)\n"
+                    res += f"   • Net change: {len(updated_lines) - len(original_lines)} line(s)\n\n"
+                
+                res += "─" * 60 + "\n"
             
             return res
         

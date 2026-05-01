@@ -28,11 +28,16 @@ class ArchitectCoder(AskCoder):
 
         # Show visual indicator that this is the planning phase
         if self.io.pretty:
-            self.io.tool_output("\n📋 Planning phase complete", log_only=False)
+            self.io.tool_output("\n" + "─" * 60, log_only=False)
+            self.io.tool_output("📋 Planning phase complete", log_only=False, bold=True)
+            self.io.tool_output("─" * 60, log_only=False)
             self.io.tool_info("Review the plan above before proceeding", log_only=False)
+            self.io.tool_output("", log_only=False)
 
         if not self.auto_accept_architect and not self.io.confirm_ask("Proceed with the planned changes?"):
-            self.io.tool_output("Plan cancelled. No files were modified.", log_only=False)
+            self.io.tool_output("─" * 60, log_only=False)
+            self.io.tool_warning("Plan cancelled. No files were modified.", log_only=False)
+            self.io.tool_output("─" * 60, log_only=False)
             return
 
         kwargs = dict()

@@ -74,16 +74,28 @@ class SingleWholeFileFunctionCoder(Coder):
         content = args.get("content")
 
         if explanation:
-            # Add visual indicator for planning content
-            res += "📋 **Plan:**\n\n"
+            # Add visual indicator for planning content with better formatting
+            res += "\n"
+            res += "─" * 60 + "\n"
+            res += "📋 **PLAN OVERVIEW**\n"
+            res += "─" * 60 + "\n\n"
             res += f"{explanation}\n\n"
 
-        # Show content statistics
+        # Show content statistics with better visuals
         if content:
+            res += "─" * 60 + "\n"
+            res += "📝 **CONTENT TO WRITE**\n"
+            res += "─" * 60 + "\n\n"
+            
             line_count = len(content.splitlines())
             char_count = len(content)
-            res += "**Content to write:**\n\n"
-            res += f"Total: {line_count} line(s), {char_count} character(s)\n\n"
+            file_size_kb = char_count / 1024
+            
+            res += f"📊 **Statistics:**\n"
+            res += f"   • Lines: {line_count}\n"
+            res += f"   • Characters: {char_count}\n"
+            res += f"   • Size: ~{file_size_kb:.2f} KB\n\n"
+            res += "─" * 60 + "\n\n"
 
         for k, v in args.items():
             res += "\n"
