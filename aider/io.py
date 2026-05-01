@@ -1191,8 +1191,8 @@ class InputOutput:
         
         Args:
             *messages: Variable number of message strings to display
-            log_only: If True, only log to chat history without displaying
-            bold: If True, display message in bold text
+            log_only (bool): If True, only log to chat history without displaying
+            bold (bool): If True, display message in bold text
             
         Behavior:
             - Messages are joined with spaces
@@ -1258,7 +1258,13 @@ class InputOutput:
                 self.tool_output(output, log_only=False)
 
     def tool_progress(self, message, progress=None):
-        """Display a progress indicator."""
+        """
+        Display a progress indicator with optional progress bar.
+        
+        Args:
+            message (str): Progress message to display
+            progress (float, optional): Progress value between 0.0 and 1.0
+        """
         if not self.pretty:
             self.tool_output(message, log_only=False)
             return
@@ -1277,6 +1283,54 @@ class InputOutput:
             idx = int(time.time() * 10) % len(spinner)
             progress_text = Text(f"{spinner[idx]} {message}", style="yellow")
             self.console.print(progress_text)
+
+    def tool_success(self, message, strip=True):
+        """
+        Display success messages to the user with success formatting.
+        
+        This method formats and displays success messages with a success color
+        and optional checkmark icon for better user feedback.
+        
+        Args:
+            message (str): Success message to display
+            strip (bool): Whether to strip whitespace from the message
+        """
+        logger = logging.getLogger(__name__)
+        logger.info(f"Tool success: {message}")
+        
+        if strip:
+            message = message.strip()
+        
+        if self.pretty:
+            # Add a checkmark icon for success messages
+            success_text = Text(f"✅ {message}", style="green bold")
+            self.console.print(success_text)
+        else:
+            self._tool_message(message, strip, "green")
+
+    def tool_info(self, message, strip=True):
+        """
+        Display informational messages to the user with info formatting.
+        
+        This method formats and displays informational messages with an info color
+        and optional info icon for better user feedback.
+        
+        Args:
+            message (str): Info message to display
+            strip (bool): Whether to strip whitespace from the message
+        """
+        logger = logging.getLogger(__name__)
+        logger.info(f"Tool info: {message}")
+        
+        if strip:
+            message = message.strip()
+        
+        if self.pretty:
+            # Add an info icon for informational messages
+            info_text = Text(f"ℹ️  {message}", style="blue")
+            self.console.print(info_text)
+        else:
+            self._tool_message(message, strip, "blue")
 
     def get_assistant_mdstream(self):
         mdargs = dict(
