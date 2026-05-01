@@ -45,6 +45,9 @@ from tqdm import tqdm
 from aider.dump import dump
 from aider.waiting import Spinner
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
@@ -58,9 +61,6 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
     logger.warning("OpenAI library not available, embedding generation will be disabled")
-
-# Configure logging
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -2634,19 +2634,25 @@ def test_{function_name}_error_handling():
             logger.error(f"Error generating coverage report: {e}")
             return {'error': str(e)}
     
-    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+    def _cosine_similarity(self, vec1, vec2) -> float:
         """
         Calculate cosine similarity between two vectors.
         
         Args:
-            vec1: First vector
-            vec2: Second vector
+            vec1: First vector (list or numpy array)
+            vec2: Second vector (list or numpy array)
             
         Returns:
             Cosine similarity score
         """
         if not NUMPY_AVAILABLE:
             return 0.0
+        
+        # Convert to numpy arrays if needed
+        if not isinstance(vec1, np.ndarray):
+            vec1 = np.array(vec1)
+        if not isinstance(vec2, np.ndarray):
+            vec2 = np.array(vec2)
         
         dot_product = np.dot(vec1, vec2)
         norm1 = np.linalg.norm(vec1)
