@@ -3398,65 +3398,182 @@ theme:
         
         This command provides automated code refactoring functionality using
         popular Python refactoring tools. It supports multiple refactoring
-        types and can target specific files or entire directories.
+        operations including multi-file editing, cross-file renaming, and batch operations.
         
-        Supported Refactor Types:
-            - autopep8: PEP 8 compliance (pip install autopep8)
-            - isort: Import sorting (pip install isort)
-            - rope: Advanced refactoring (pip install rope)
-        
-        Args:
-            args (str): Refactor command in format "<type> [file]"
+        Subcommands:
+            - rename <old_name> <new_name> [kind]: Rename symbol across all files
+            - batch <pattern> <replacement> [file_pattern]: Batch search and replace
+            - multi-edit <json_edits>: Edit multiple files at once (JSON format)
             
-        Example:
-            /refactor autopep8 script.py
-            /refactor isort .
+        Args:
+            args: Refactoring command in format "<command> [args]"
+            
+        Examples:
+            /refactor rename myFunction myNewName function
+            /refactor batch "old_pattern" "new_pattern" "*.py"
         """
-        import subprocess
         
         self.log_command_start("cmd_refactor", args)
         
         parts = args.strip().split()
+        
         if not parts:
-            self.io.tool_error("Usage: /refactor <type> [file]")
-            self.io.tool_error("Types: autopep8, isort, rope")
-            self.io.tool_error("Example: /refactor autopep8 script.py")
-            self.io.tool_error("Example: /refactor isort .")
+            self.io.tool_error("Usage: /refactor <command> [args]")
+            self.io.tool_error("Commands: rename, batch, multi-edit")
+            self.io.tool_error("Example: /refactor rename oldName newName")
             self.log_command_end("cmd_refactor", "error", "No arguments provided")
             return
         
-        refactor_type = parts[0].lower()
-        target = parts[1] if len(parts) > 1 else '.'
+        command = parts[0].lower()
         
-        self.io.tool_output(f"🔧 Refactoring: {refactor_type} on {target}", log_only=False)
+        # Check if index manager is available
+        if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+            self.io.tool_error("Index manager not available. Run /index first.")
+            self.log_command_end("cmd_refactor", "error", "Index manager not available")
+            return
+        
+        self.io.tool_output(f"🔧 Refactor: {command}", log_only=False)
         self.io.tool_output("=" * 50, log_only=False)
         
         try:
-            if refactor_type == 'autopep8':
-                result = subprocess.run(['autopep8', '--in-place', '--aggressive', target], capture_output=True, text=True)
-                self.io.tool_output("✓ AutoPEP8 refactoring complete", log_only=False)
+            if command == 'rename':
+                if len(parts) < 3:
+                    self.io.tool_error("Usage: /refactor rename <old_name> <new_name> [kind]")
+                    self.io.tool_error("Kinds: function, class, variable")
+                    return
+                
+                old_name = parts[1]
+                new_name = parts[2]
+                kind = parts[3] if len(parts) > 3 else None
+                
+                results = self.coder.index_manager.cross_file_rename(old_name, new_name, kind)
+                
+                self.io.tool_output(f"\n📊 Rename results:", log_only=False)
+                self.io.tool_output(f"  Definitions changed: {len(results['definitions_changed'])}", log_only=False)
+                self.io.tool_output(f"  References changed: {len(results['references_changed'])}", log_only=False)
+                self.io.tool_output(f"  Total changes: {results['total_changes']}", log_only=False)
+                
+                if self.verbose and results['definitions_changed']:
+                    self.io.tool_output(f"\n  Definitions:", log_only=False)
+                    for def_change in results['definitions_changed']:
+                        self.io.tool_output(f"    • {def_change['file_path']} (line {def_change['line']})", log_only=False)
             
-            elif refactor_type == 'isort':
-                result = subprocess.run(['isort', target], capture_output=True, text=True)
-                self.io.tool_output("✓ Import sorting complete", log_only=False)
+            elif command == 'batch':
+                if len(parts) < 3:
+                    self.io.tool_error("Usage: /refactor batch <pattern> <replacement> [file_pattern]")
+                    return
+                
+                pattern = parts[1]
+                replacement = parts[2]
+                file_pattern = parts[3] if len(parts) > 3 else "*"
+                
+                results = self.coder.index_manager.batch_search_replace(pattern, replacement, file_pattern)
+                
+                self.io.tool_output(f"\n📊 Batch replace results:", log_only=False)
+                self.io.tool_output(f"  Files processed: {results['files_processed']}", log_only=False)
+                self.io.tool_output(f"  Files changed: {results['files_changed']}", log_only=False)
+                self.io.tool_output(f"  Total replacements: {results['total_replacements']}", log_only=False)
+                
+                if results['errors']:
+                    self.io.tool_output(f"\n  Errors: {len(results['errors'])}", log_only=False)
+                    for error in results['errors'][:5]:
+                        self.io.tool_output(f"    • {error['file']}: {error['error']}", log_only=False)
             
-            elif refactor_type == 'rope':
-                self.io.tool_output("⚠️  Rope requires interactive setup", log_only=False)
-                self.io.tool_output("Use: rope <file>", log_only=False)
+            elif command == 'multi-edit':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /refactor multi-edit <json_edits>")
+                    self.io.tool_error("JSON format: [{'file_path': '...', 'old_text': '...', 'new_text': '...'}]")
+                    return
+                
+                try:
+                    import json
+                    json_str = ' '.join(parts[1:])
+                    edits = json.loads(json_str)
+                    
+                    results = self.coder.index_manager.batch_edit_files(edits)
+                    
+                    self.io.tool_output(f"\n📊 Multi-edit results:", log_only=False)
+                    self.io.tool_output(f"  Total edits: {results['total']}", log_only=False)
+                    self.io.tool_output(f"  Successful: {len(results['successful'])}", log_only=False)
+                    self.io.tool_output(f"  Failed: {len(results['failed'])}", log_only=False)
+                    
+                    if results['failed']:
+                        self.io.tool_output(f"\n  Failed edits:", log_only=False)
+                        for failed in results['failed']:
+                            self.io.tool_output(f"    • {failed['file_path']}: {failed['error']}", log_only=False)
+                
+                except json.JSONDecodeError as e:
+                    self.io.tool_error(f"Invalid JSON format: {e}")
+                    return
             
             else:
-                self.io.tool_error(f"Unknown type: {refactor_type}")
-                self.io.tool_error("Supported: autopep8, isort, rope")
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_output("Available commands: rename, batch, multi-edit", log_only=False)
+                self.log_command_end("cmd_refactor", "error", f"Unknown command: {command}")
                 return
             
-        except FileNotFoundError:
-            self.io.tool_output(f"⚠️  {refactor_type} not found (pip install autopep8 isort rope)", log_only=False)
+            self.log_command_end("cmd_refactor", "success", f"Command {command} completed")
+            
         except Exception as e:
             self.io.tool_error(f"Error: {e}")
             self.log_command_end("cmd_refactor", "error", str(e)[:100])
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
-        self.io.tool_output("\n💡 Install: pip install autopep8 isort rope", log_only=False)
+    
+    def cmd_security(self, args):
+        """
+        Scan code for security vulnerabilities.
+        
+        This command uses security scanning tools to identify potential security issues
+        in the codebase.
+        
+        Args:
+            args: Security scan command
+        """
+        import subprocess
+        
+        self.log_command_start("cmd_security", args)
+        
+        parts = args.strip().split()
+        if not parts:
+            self.io.tool_error("Usage: /security <command> [target]")
+            self.io.tool_error("Commands: bandit, safety")
+            self.io.tool_error("Example: /security bandit .")
+            self.log_command_end("cmd_security", "error", "No arguments provided")
+            return
+        
+        command = parts[0].lower()
+        target = parts[1] if len(parts) > 1 else '.'
+        
+        self.io.tool_output(f"🔒 Security scan: {command} on {target}", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
+        
+        try:
+            if command == 'bandit':
+                result = subprocess.run(['bandit', '-r', target], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+                self.io.tool_output("✓ Bandit scan complete", log_only=False)
+            
+            elif command == 'safety':
+                result = subprocess.run(['safety', 'check', '-r', target], capture_output=True, text=True)
+                self.io.tool_output(result.stdout, log_only=False)
+                self.io.tool_output("✓ Safety check complete", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_error("Supported: bandit, safety")
+                return
+            
+            self.log_command_end("cmd_security", "success", f"Scan completed")
+        
+        except FileNotFoundError:
+            self.io.tool_output(f"⚠️  {command} not found (pip install bandit safety)", log_only=False)
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_security", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+        self.io.tool_output("\n💡 Install: pip install bandit safety", log_only=False)
 
     def cmd_env(self, args):
         "Manage virtual environments"

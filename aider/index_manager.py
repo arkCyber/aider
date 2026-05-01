@@ -2112,6 +2112,244 @@ class IndexManager:
             logger.error(f"Error getting file structure: {e}")
             return {'files': [], 'directories': []}
     
+    def batch_edit_files(self, edits: List[Dict]) -> Dict:
+        """
+        Edit multiple files in a single operation.
+        
+        This method implements multi-file editing capabilities similar to Cursor,
+        allowing simultaneous edits across multiple files.
+        
+        Args:
+            edits: List of edit dictionaries, each containing:
+                - file_path: Path to the file
+                - old_text: Text to replace
+                - new_text: New text
+                - line: Optional line number for context
+                
+        Returns:
+            Dictionary with success/failure status for each edit
+        """
+        results = {
+            'successful': [],
+            'failed': [],
+            'total': len(edits)
+        }
+        
+        for edit in edits:
+            try:
+                file_path = Path(edit['file_path'])
+                
+                if not file_path.exists():
+                    results['failed'].append({
+                        'file_path': str(file_path),
+                        'error': 'File does not exist'
+                    })
+                    continue
+                
+                # Read file content
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Perform replacement
+                old_text = edit['old_text']
+                new_text = edit['new_text']
+                
+                if old_text not in content:
+                    results['failed'].append({
+                        'file_path': str(file_path),
+                        'error': 'Old text not found in file'
+                    })
+                    continue
+                
+                # Replace text
+                new_content = content.replace(old_text, new_text)
+                
+                # Write back
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                
+                results['successful'].append({
+                    'file_path': str(file_path),
+                    'status': 'success'
+                })
+                
+                logger.info(f"Successfully edited {file_path}")
+                
+            except Exception as e:
+                results['failed'].append({
+                    'file_path': edit.get('file_path', 'unknown'),
+                    'error': str(e)
+                })
+                logger.error(f"Error editing {edit.get('file_path')}: {e}")
+        
+        return results
+    
+    def cross_file_rename(self, old_name: str, new_name: str, kind: Optional[str] = None) -> Dict:
+        """
+        Rename a symbol across all files in the project.
+        
+        This method implements cross-file refactoring similar to Cursor,
+        renaming symbols (functions, classes, variables) across the entire codebase.
+        
+        Args:
+            old_name: Current name of the symbol
+            new_name: New name for the symbol
+            kind: Optional symbol kind to filter (function, class, variable)
+            
+        Returns:
+            Dictionary with refactoring results
+        """
+        results = {
+            'definitions_changed': [],
+            'references_changed': [],
+            'total_changes': 0
+        }
+        
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Find all definitions
+            if kind:
+                cursor.execute("""
+                    SELECT file_path, line, name
+                    FROM symbols
+                    WHERE name = ? AND kind = ?
+                """, (old_name, kind))
+            else:
+                cursor.execute("""
+                    SELECT file_path, line, name
+                    FROM symbols
+                    WHERE name = ?
+                """, (old_name,))
+            
+            definitions = cursor.fetchall()
+            
+            # Find all references
+            cursor.execute("""
+                SELECT from_file, line
+                FROM references
+                WHERE symbol_name = ?
+            """, (old_name,))
+            
+            references = cursor.fetchall()
+            conn.close()
+            
+            # Collect all files to edit
+            files_to_edit = set()
+            
+            for def_row in definitions:
+                file_path, line, name = def_row
+                files_to_edit.add(file_path)
+                results['definitions_changed'].append({
+                    'file_path': file_path,
+                    'line': line
+                })
+            
+            for ref_row in references:
+                file_path, line = ref_row
+                files_to_edit.add(file_path)
+                results['references_changed'].append({
+                    'file_path': file_path,
+                    'line': line
+                })
+            
+            # Perform replacements in each file
+            for file_path in files_to_edit:
+                try:
+                    file_path_obj = Path(file_path)
+                    if not file_path_obj.exists():
+                        continue
+                    
+                    with open(file_path_obj, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    # Replace old_name with new_name
+                    new_content = content.replace(old_name, new_name)
+                    
+                    if new_content != content:
+                        with open(file_path_obj, 'w', encoding='utf-8') as f:
+                            f.write(new_content)
+                        results['total_changes'] += 1
+                        logger.info(f"Renamed {old_name} to {new_name} in {file_path}")
+                
+                except Exception as e:
+                    logger.error(f"Error renaming in {file_path}: {e}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in cross-file rename: {e}")
+            return results
+    
+    def batch_search_replace(self, pattern: str, replacement: str, file_pattern: str = "*") -> Dict:
+        """
+        Perform batch search and replace across multiple files.
+        
+        This method implements batch operations similar to Cursor,
+        allowing pattern-based replacements across multiple files.
+        
+        Args:
+            pattern: Pattern to search for
+            replacement: Replacement text
+            file_pattern: File pattern to match (e.g., "*.py")
+            
+        Returns:
+            Dictionary with operation results
+        """
+        results = {
+            'files_processed': 0,
+            'files_changed': 0,
+            'total_replacements': 0,
+            'errors': []
+        }
+        
+        try:
+            import re
+            from fnmatch import fnmatch
+            
+            # Get all files
+            files = self._scan_directory(self.root)
+            
+            for filepath in files:
+                # Check file pattern
+                if not fnmatch(filepath.name, file_pattern):
+                    continue
+                
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    # Count occurrences
+                    count = content.count(pattern)
+                    
+                    if count > 0:
+                        # Perform replacement
+                        new_content = content.replace(pattern, replacement)
+                        
+                        if new_content != content:
+                            with open(filepath, 'w', encoding='utf-8') as f:
+                                f.write(new_content)
+                            
+                            results['files_changed'] += 1
+                            results['total_replacements'] += count
+                            logger.info(f"Replaced {count} occurrences in {filepath}")
+                    
+                    results['files_processed'] += 1
+                
+                except Exception as e:
+                    results['errors'].append({
+                        'file': str(filepath),
+                        'error': str(e)
+                    })
+                    logger.error(f"Error processing {filepath}: {e}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in batch search replace: {e}")
+            return results
+    
     def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
         Calculate cosine similarity between two vectors.
