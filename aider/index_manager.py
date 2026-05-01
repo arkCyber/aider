@@ -952,9 +952,13 @@ class IndexManager:
             content: File content
             
         Returns:
-            List of chunks with metadata
+            List of chunks with metadata including type, name, line range, content, and hash
         """
         chunks = []
+        
+        if not content or not content.strip():
+            logger.warning(f"Empty content for {filepath}")
+            return chunks
         
         if filepath.suffix == '.py':
             # Use AST to chunk Python code
@@ -994,6 +998,17 @@ class IndexManager:
                         chunk_info['hash'] = self._get_content_hash(chunk_info['content'])
                         chunks.append(chunk_info)
                         
+            except SyntaxError as e:
+                logger.error(f"Syntax error in {filepath}: {e}")
+                # Fallback: use file as single chunk
+                chunks.append({
+                    'type': 'file',
+                    'name': filepath.name,
+                    'start_line': 1,
+                    'end_line': content.count('\n') + 1,
+                    'content': content,
+                    'hash': self._get_content_hash(content)
+                })
             except Exception as e:
                 logger.error(f"Error chunking {filepath}: {e}")
                 # Fallback: use file as single chunk
@@ -1012,15 +1027,17 @@ class IndexManager:
             
             for i in range(0, len(lines), chunk_size):
                 chunk_content = '\n'.join(lines[i:i+chunk_size])
-                chunks.append({
-                    'type': 'section',
-                    'name': f"{filepath.name}_chunk_{i//chunk_size}",
-                    'start_line': i + 1,
-                    'end_line': min(i + chunk_size, len(lines)),
-                    'content': chunk_content,
-                    'hash': self._get_content_hash(chunk_content)
-                })
+                if chunk_content.strip():  # Only add non-empty chunks
+                    chunks.append({
+                        'type': 'section',
+                        'name': f"{filepath.name}_chunk_{i//chunk_size}",
+                        'start_line': i + 1,
+                        'end_line': min(i + chunk_size, len(lines)),
+                        'content': chunk_content,
+                        'hash': self._get_content_hash(chunk_content)
+                    })
         
+        logger.debug(f"Chunked {filepath} into {len(chunks)} chunks")
         return chunks
     
     def _get_content_hash(self, content: str) -> str:
