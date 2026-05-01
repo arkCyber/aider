@@ -947,6 +947,11 @@ class IndexManager:
         This method splits code into logical chunks (functions, classes, etc.)
         similar to Cursor's approach for better semantic understanding.
         
+        Supports multiple languages:
+        - Python: AST-based chunking for functions, classes
+        - JavaScript/TypeScript: Simple regex-based chunking
+        - Other languages: Line-based chunking
+        
         Args:
             filepath: Path to the file
             content: File content
@@ -960,85 +965,250 @@ class IndexManager:
             logger.warning(f"Empty content for {filepath}")
             return chunks
         
+        # Python: Use AST for precise chunking
         if filepath.suffix == '.py':
-            # Use AST to chunk Python code
-            try:
-                import ast
-                tree = ast.parse(content, filename=str(filepath))
-                
-                for node in ast.walk(tree):
-                    chunk_info = None
-                    
-                    if isinstance(node, ast.FunctionDef):
-                        chunk_info = {
-                            'type': 'function',
-                            'name': node.name,
-                            'start_line': node.lineno,
-                            'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
-                            'content': ast.get_source_segment(content, node)
-                        }
-                    elif isinstance(node, ast.AsyncFunctionDef):
-                        chunk_info = {
-                            'type': 'async_function',
-                            'name': node.name,
-                            'start_line': node.lineno,
-                            'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
-                            'content': ast.get_source_segment(content, node)
-                        }
-                    elif isinstance(node, ast.ClassDef):
-                        chunk_info = {
-                            'type': 'class',
-                            'name': node.name,
-                            'start_line': node.lineno,
-                            'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
-                            'content': ast.get_source_segment(content, node)
-                        }
-                    
-                    if chunk_info and chunk_info['content']:
-                        chunk_info['hash'] = self._get_content_hash(chunk_info['content'])
-                        chunks.append(chunk_info)
-                        
-            except SyntaxError as e:
-                logger.error(f"Syntax error in {filepath}: {e}")
-                # Fallback: use file as single chunk
-                chunks.append({
-                    'type': 'file',
-                    'name': filepath.name,
-                    'start_line': 1,
-                    'end_line': content.count('\n') + 1,
-                    'content': content,
-                    'hash': self._get_content_hash(content)
-                })
-            except Exception as e:
-                logger.error(f"Error chunking {filepath}: {e}")
-                # Fallback: use file as single chunk
-                chunks.append({
-                    'type': 'file',
-                    'name': filepath.name,
-                    'start_line': 1,
-                    'end_line': content.count('\n') + 1,
-                    'content': content,
-                    'hash': self._get_content_hash(content)
-                })
-        else:
-            # For non-Python files, chunk by logical sections or use whole file
-            lines = content.split('\n')
-            chunk_size = 100  # lines per chunk
-            
-            for i in range(0, len(lines), chunk_size):
-                chunk_content = '\n'.join(lines[i:i+chunk_size])
-                if chunk_content.strip():  # Only add non-empty chunks
-                    chunks.append({
-                        'type': 'section',
-                        'name': f"{filepath.name}_chunk_{i//chunk_size}",
-                        'start_line': i + 1,
-                        'end_line': min(i + chunk_size, len(lines)),
-                        'content': chunk_content,
-                        'hash': self._get_content_hash(chunk_content)
-                    })
+            return self._chunk_python_code(filepath, content)
         
-        logger.debug(f"Chunked {filepath} into {len(chunks)} chunks")
+        # JavaScript/TypeScript: Use regex for function/class detection
+        elif filepath.suffix in ['.js', '.jsx', '.ts', '.tsx']:
+            return self._chunk_javascript_code(filepath, content)
+        
+        # Go: Use regex for function detection
+        elif filepath.suffix == '.go':
+            return self._chunk_go_code(filepath, content)
+        
+        # Rust: Use regex for function detection
+        elif filepath.suffix == '.rs':
+            return self._chunk_rust_code(filepath, content)
+        
+        # Default: Line-based chunking
+        else:
+            return self._chunk_by_lines(filepath, content)
+    
+    def _chunk_python_code(self, filepath: Path, content: str) -> List[Dict]:
+        """Chunk Python code using AST."""
+        chunks = []
+        try:
+            import ast
+            tree = ast.parse(content, filename=str(filepath))
+            
+            for node in ast.walk(tree):
+                chunk_info = None
+                
+                if isinstance(node, ast.FunctionDef):
+                    chunk_info = {
+                        'type': 'function',
+                        'name': node.name,
+                        'start_line': node.lineno,
+                        'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                        'content': ast.get_source_segment(content, node)
+                    }
+                elif isinstance(node, ast.AsyncFunctionDef):
+                    chunk_info = {
+                        'type': 'async_function',
+                        'name': node.name,
+                        'start_line': node.lineno,
+                        'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                        'content': ast.get_source_segment(content, node)
+                    }
+                elif isinstance(node, ast.ClassDef):
+                    chunk_info = {
+                        'type': 'class',
+                        'name': node.name,
+                        'start_line': node.lineno,
+                        'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                        'content': ast.get_source_segment(content, node)
+                    }
+                
+                if chunk_info and chunk_info['content']:
+                    chunk_info['hash'] = self._get_content_hash(chunk_info['content'])
+                    chunks.append(chunk_info)
+                    
+        except SyntaxError as e:
+            logger.error(f"Syntax error in {filepath}: {e}")
+            chunks.append(self._create_file_chunk(filepath, content))
+        except Exception as e:
+            logger.error(f"Error chunking {filepath}: {e}")
+            chunks.append(self._create_file_chunk(filepath, content))
+        
+        logger.debug(f"Chunked {filepath} into {len(chunks)} Python chunks")
         return chunks
+    
+    def _chunk_javascript_code(self, filepath: Path, content: str) -> List[Dict]:
+        """Chunk JavaScript/TypeScript code using regex."""
+        chunks = []
+        import re
+        
+        # Regex patterns for JS/TS
+        function_pattern = r'(?:function\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>)|(\w+)\s*\([^)]*\)\s*\{)'
+        class_pattern = r'class\s+(\w+)'
+        
+        lines = content.split('\n')
+        current_chunk = []
+        chunk_name = 'unknown'
+        chunk_type = 'section'
+        
+        for i, line in enumerate(lines, 1):
+            # Check for function
+            func_match = re.search(function_pattern, line)
+            if func_match:
+                if current_chunk:
+                    chunks.append(self._create_chunk_from_lines(
+                        filepath, chunk_name, chunk_type, current_chunk, i - len(current_chunk)
+                    ))
+                    current_chunk = []
+                
+                chunk_name = func_match.group(1) or func_match.group(2) or func_match.group(3)
+                chunk_type = 'function'
+            
+            # Check for class
+            class_match = re.search(class_pattern, line)
+            if class_match:
+                if current_chunk:
+                    chunks.append(self._create_chunk_from_lines(
+                        filepath, chunk_name, chunk_type, current_chunk, i - len(current_chunk)
+                    ))
+                    current_chunk = []
+                
+                chunk_name = class_match.group(1)
+                chunk_type = 'class'
+            
+            current_chunk.append(line)
+        
+        # Add last chunk
+        if current_chunk:
+            chunks.append(self._create_chunk_from_lines(
+                filepath, chunk_name, chunk_type, current_chunk, len(lines) - len(current_chunk) + 1
+            ))
+        
+        logger.debug(f"Chunked {filepath} into {len(chunks)} JS/TS chunks")
+        return chunks
+    
+    def _chunk_go_code(self, filepath: Path, content: str) -> List[Dict]:
+        """Chunk Go code using regex."""
+        chunks = []
+        import re
+        
+        # Go function pattern
+        func_pattern = r'func\s+(?:\(\s*\w+\s+\*?\w+\s*\)\s+)?(\w+)\s*\('
+        
+        lines = content.split('\n')
+        current_chunk = []
+        chunk_name = 'unknown'
+        chunk_type = 'section'
+        
+        for i, line in enumerate(lines, 1):
+            func_match = re.search(func_pattern, line)
+            if func_match:
+                if current_chunk:
+                    chunks.append(self._create_chunk_from_lines(
+                        filepath, chunk_name, chunk_type, current_chunk, i - len(current_chunk)
+                    ))
+                    current_chunk = []
+                
+                chunk_name = func_match.group(1)
+                chunk_type = 'function'
+            
+            current_chunk.append(line)
+        
+        if current_chunk:
+            chunks.append(self._create_chunk_from_lines(
+                filepath, chunk_name, chunk_type, current_chunk, len(lines) - len(current_chunk) + 1
+            ))
+        
+        logger.debug(f"Chunked {filepath} into {len(chunks)} Go chunks")
+        return chunks
+    
+    def _chunk_rust_code(self, filepath: Path, content: str) -> List[Dict]:
+        """Chunk Rust code using regex."""
+        chunks = []
+        import re
+        
+        # Rust function pattern
+        func_pattern = r'fn\s+(\w+)\s*\('
+        struct_pattern = r'struct\s+(\w+)'
+        impl_pattern = r'impl\s+(\w+)'
+        
+        lines = content.split('\n')
+        current_chunk = []
+        chunk_name = 'unknown'
+        chunk_type = 'section'
+        
+        for i, line in enumerate(lines, 1):
+            func_match = re.search(func_pattern, line)
+            struct_match = re.search(struct_pattern, line)
+            impl_match = re.search(impl_pattern, line)
+            
+            if func_match or struct_match or impl_match:
+                if current_chunk:
+                    chunks.append(self._create_chunk_from_lines(
+                        filepath, chunk_name, chunk_type, current_chunk, i - len(current_chunk)
+                    ))
+                    current_chunk = []
+                
+                if func_match:
+                    chunk_name = func_match.group(1)
+                    chunk_type = 'function'
+                elif struct_match:
+                    chunk_name = struct_match.group(1)
+                    chunk_type = 'struct'
+                elif impl_match:
+                    chunk_name = impl_match.group(1)
+                    chunk_type = 'impl'
+            
+            current_chunk.append(line)
+        
+        if current_chunk:
+            chunks.append(self._create_chunk_from_lines(
+                filepath, chunk_name, chunk_type, current_chunk, len(lines) - len(current_chunk) + 1
+            ))
+        
+        logger.debug(f"Chunked {filepath} into {len(chunks)} Rust chunks")
+        return chunks
+    
+    def _chunk_by_lines(self, filepath: Path, content: str) -> List[Dict]:
+        """Chunk code by lines (fallback for unsupported languages)."""
+        lines = content.split('\n')
+        chunk_size = 100  # lines per chunk
+        chunks = []
+        
+        for i in range(0, len(lines), chunk_size):
+            chunk_content = '\n'.join(lines[i:i+chunk_size])
+            if chunk_content.strip():
+                chunks.append({
+                    'type': 'section',
+                    'name': f"{filepath.name}_chunk_{i//chunk_size}",
+                    'start_line': i + 1,
+                    'end_line': min(i + chunk_size, len(lines)),
+                    'content': chunk_content,
+                    'hash': self._get_content_hash(chunk_content)
+                })
+        
+        logger.debug(f"Chunked {filepath} into {len(chunks)} line-based chunks")
+        return chunks
+    
+    def _create_chunk_from_lines(self, filepath: Path, name: str, chunk_type: str, lines: List[str], start_line: int) -> Dict:
+        """Create chunk dictionary from lines."""
+        content = '\n'.join(lines)
+        return {
+            'type': chunk_type,
+            'name': name,
+            'start_line': start_line,
+            'end_line': start_line + len(lines) - 1,
+            'content': content,
+            'hash': self._get_content_hash(content)
+        }
+    
+    def _create_file_chunk(self, filepath: Path, content: str) -> Dict:
+        """Create file-level chunk as fallback."""
+        return {
+            'type': 'file',
+            'name': filepath.name,
+            'start_line': 1,
+            'end_line': content.count('\n') + 1,
+            'content': content,
+            'hash': self._get_content_hash(content)
+        }
     
     def _get_content_hash(self, content: str) -> str:
         """
