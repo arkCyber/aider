@@ -45,6 +45,20 @@ from tqdm import tqdm
 from aider.dump import dump
 from aider.waiting import Spinner
 
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    logger.warning("NumPy not available, vector search will be limited")
+
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    logger.warning("OpenAI library not available, embedding generation will be disabled")
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -65,6 +79,67 @@ class MerkleNode:
             'file_path': self.file_path,
             'is_leaf': self.is_leaf
         }
+
+
+class EmbeddingProvider:
+    """Base class for embedding providers."""
+    
+    def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for a list of texts.
+        
+        Args:
+            texts: List of text strings to embed
+            
+        Returns:
+            List of embedding vectors
+        """
+        raise NotImplementedError("Subclasses must implement generate_embeddings")
+
+
+class OpenAIEmbeddingProvider(EmbeddingProvider):
+    """OpenAI API-based embedding provider."""
+    
+    def __init__(self, api_key: Optional[str] = None, model: str = "text-embedding-3-small"):
+        """
+        Initialize OpenAI embedding provider.
+        
+        Args:
+            api_key: OpenAI API key (if None, uses OPENAI_API_KEY env var)
+            model: Embedding model to use
+        """
+        if not OPENAI_AVAILABLE:
+            raise ImportError("OpenAI library not available")
+        
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("OpenAI API key not provided")
+        
+        self.model = model
+        self.client = OpenAI(api_key=self.api_key)
+        logger.info(f"Initialized OpenAI embedding provider with model: {model}")
+    
+    def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings using OpenAI API.
+        
+        Args:
+            texts: List of text strings to embed
+            
+        Returns:
+            List of embedding vectors
+        """
+        try:
+            response = self.client.embeddings.create(
+                model=self.model,
+                input=texts
+            )
+            embeddings = [item.embedding for item in response.data]
+            logger.debug(f"Generated {len(embeddings)} embeddings")
+            return embeddings
+        except Exception as e:
+            logger.error(f"Error generating embeddings: {e}")
+            raise
 
 
 class IndexStatus(Enum):
@@ -132,6 +207,7 @@ class IndexManager:
         max_memory_mb: int = 2048,
         background: bool = False,
         verbose: bool = False,
+        enable_embeddings: bool = False,
     ):
         """
         Initialize the index manager.
@@ -142,12 +218,27 @@ class IndexManager:
             max_memory_mb: Maximum memory in MB for indexing
             background: Whether to run indexing in background
             verbose: Enable verbose logging
+            enable_embeddings: Enable embeddings generation
         """
         self.root = Path(root)
         self.io = io
         self.max_memory_mb = max_memory_mb
         self.background = background
         self.verbose = verbose
+        
+        # Embedding provider for vector search
+        self.embedding_provider: Optional[EmbeddingProvider] = None
+        self.enable_embeddings = enable_embeddings
+        if enable_embeddings and OPENAI_AVAILABLE:
+            try:
+                self.embedding_provider = OpenAIEmbeddingProvider(
+                    api_key=os.environ.get("OPENAI_API_KEY"),
+                    model="text-embedding-3-small"
+                )
+                logger.info("Embedding provider initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize embedding provider: {e}")
+                self.embedding_provider = None
         
         # Index state
         self.status = IndexStatus.IDLE
@@ -256,6 +347,22 @@ class IndexManager:
                 )
             """)
             
+            # Create embeddings table for vector search
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_path TEXT,
+                    chunk_type TEXT,
+                    chunk_name TEXT,
+                    content TEXT,
+                    content_hash TEXT,
+                    embedding BLOB,
+                    model TEXT,
+                    created_at REAL,
+                    UNIQUE(file_path, chunk_name, content_hash, model)
+                )
+            """)
+            
             # Create indexes for better query performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path)")
@@ -266,6 +373,8 @@ class IndexManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_history_sha ON git_history(commit_sha)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_file_history_sha ON git_file_history(commit_sha)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_file_history_file ON git_file_history(file_path)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_file ON embeddings(file_path)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_hash ON embeddings(content_hash)")
             
             # Create metadata table
             cursor.execute("""
@@ -438,6 +547,10 @@ class IndexManager:
                     content = f.read()
                 chunks = self._chunk_code(filepath, content)
                 self._store_chunks(filepath, chunks)
+                
+                # Generate and store embeddings if enabled
+                if self.enable_embeddings and chunks:
+                    self._generate_and_store_embeddings(filepath, chunks)
             except Exception as e:
                 logger.error(f"Error chunking {filepath}: {e}")
             
@@ -1371,6 +1484,73 @@ class IndexManager:
             if conn:
                 conn.close()
     
+    def _generate_and_store_embeddings(self, filepath: Path, chunks: List[Dict]) -> None:
+        """
+        Generate and store embeddings for code chunks.
+        
+        Args:
+            filepath: Path to the file
+            chunks: List of chunk dictionaries
+        """
+        if not self.embedding_provider:
+            return
+        
+        try:
+            # Prepare texts for embedding
+            texts = []
+            chunk_info = []
+            for chunk in chunks:
+                # Combine chunk name and content for better semantic understanding
+                text = f"{chunk['type']} {chunk['name']}: {chunk['content']}"
+                texts.append(text)
+                chunk_info.append(chunk)
+            
+            if not texts:
+                return
+            
+            # Generate embeddings
+            embeddings = self.embedding_provider.generate_embeddings(texts)
+            
+            # Store embeddings in database
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Clear existing embeddings for this file
+            cursor.execute("DELETE FROM embeddings WHERE file_path = ?", (str(filepath),))
+            
+            for chunk, embedding in zip(chunk_info, embeddings):
+                if NUMPY_AVAILABLE:
+                    # Convert to bytes for storage
+                    embedding_bytes = np.array(embedding, dtype=np.float32).tobytes()
+                else:
+                    # Fallback without numpy
+                    import struct
+                    embedding_bytes = struct.pack(f'{len(embedding)}f', *embedding)
+                
+                cursor.execute("""
+                    INSERT OR REPLACE INTO embeddings
+                    (file_path, chunk_type, chunk_name, content, content_hash, embedding, model, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(filepath),
+                    chunk['type'],
+                    chunk['name'],
+                    chunk['content'],
+                    chunk['hash'],
+                    embedding_bytes,
+                    self.embedding_provider.model,
+                    time.time()
+                ))
+            
+            conn.commit()
+            logger.debug(f"Generated and stored {len(embeddings)} embeddings for {filepath}")
+            
+        except Exception as e:
+            logger.error(f"Error generating embeddings for {filepath}: {e}")
+        finally:
+            if conn:
+                conn.close()
+    
     def _build_merkle_tree(self, file_hashes: Dict[str, str]) -> MerkleNode:
         """
         Build a Merkle tree from file hashes.
@@ -1670,6 +1850,93 @@ class IndexManager:
         except Exception as e:
             logger.error(f"Error getting file history: {e}")
             return []
+    
+    def semantic_search(self, query: str, limit: int = 10) -> List[Dict]:
+        """
+        Perform semantic search using vector embeddings.
+        
+        This method uses OpenAI embeddings to find semantically similar code chunks,
+        similar to Cursor's semantic search functionality.
+        
+        Args:
+            query: Search query text
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of matching chunks with similarity scores
+        """
+        if not self.embedding_provider:
+            logger.warning("Embedding provider not available for semantic search")
+            return []
+        
+        if not NUMPY_AVAILABLE:
+            logger.warning("NumPy not available for semantic search")
+            return []
+        
+        try:
+            # Generate embedding for query
+            query_embedding = self.embedding_provider.generate_embeddings([query])[0]
+            query_vector = np.array(query_embedding, dtype=np.float32)
+            
+            # Fetch all embeddings from database
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT file_path, chunk_type, chunk_name, content, embedding
+                FROM embeddings
+            """)
+            
+            results = []
+            for row in cursor.fetchall():
+                file_path, chunk_type, chunk_name, content, embedding_blob = row
+                
+                # Convert embedding from bytes
+                embedding_vector = np.frombuffer(embedding_blob, dtype=np.float32)
+                
+                # Calculate cosine similarity
+                similarity = self._cosine_similarity(query_vector, embedding_vector)
+                
+                results.append({
+                    'file_path': file_path,
+                    'chunk_type': chunk_type,
+                    'chunk_name': chunk_name,
+                    'content': content,
+                    'similarity': similarity
+                })
+            
+            conn.close()
+            
+            # Sort by similarity and return top results
+            results.sort(key=lambda x: x['similarity'], reverse=True)
+            return results[:limit]
+            
+        except Exception as e:
+            logger.error(f"Error in semantic search: {e}")
+            return []
+    
+    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """
+        Calculate cosine similarity between two vectors.
+        
+        Args:
+            vec1: First vector
+            vec2: Second vector
+            
+        Returns:
+            Cosine similarity score
+        """
+        if not NUMPY_AVAILABLE:
+            return 0.0
+        
+        dot_product = np.dot(vec1, vec2)
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        
+        return dot_product / (norm1 * norm2)
     
     def cleanup(self) -> None:
         """

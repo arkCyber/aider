@@ -4140,7 +4140,8 @@ theme:
             - symbol <query> [kind]: Search for symbols by name (function, class, variable)
             - reference <symbol_name>: Search for references to a symbol
             - file <file_path>: Get all symbols in a specific file
-            
+            - semantic <query>: Semantic search using vector embeddings
+           
         Args:
             args: Search command in format "<command> [args]"
             
@@ -4227,10 +4228,29 @@ theme:
                     self.io.tool_output(f"\n📊 Found {len(results)} symbols in {file_path}:", log_only=False)
                     for result in results:
                         self.io.tool_output(f"  • {result['name']} ({result['kind']}) - Line {result['line']}", log_only=False)
+            
+            elif command == 'semantic':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /search semantic <query>")
+                    return
                 
+                query = ' '.join(parts[1:])
+                results = self.coder.index_manager.semantic_search(query, limit=10)
+                
+                if not results:
+                    self.io.tool_output(f"No semantic matches found for '{query}'", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📊 Found {len(results)} semantic matches:", log_only=False)
+                    for result in results:
+                        self.io.tool_output(f"  • {result['file_path']}", log_only=False)
+                        self.io.tool_output(f"    Chunk: {result['chunk_type']} {result['chunk_name']}", log_only=False)
+                        self.io.tool_output(f"    Similarity: {result['similarity']:.3f}", log_only=False)
+                        self.io.tool_output(f"    Content: {result['content'][:100]}...", log_only=False)
+                        self.io.tool_output("", log_only=False)
+            
             else:
                 self.io.tool_error(f"Unknown command: {command}")
-                self.io.tool_output("Available commands: symbol, reference, file", log_only=False)
+                self.io.tool_output("Available commands: symbol, reference, file, semantic", log_only=False)
                 self.log_command_end("cmd_search", "error", f"Unknown command: {command}")
                 return
             
