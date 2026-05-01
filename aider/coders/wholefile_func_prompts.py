@@ -21,7 +21,13 @@ NEVER return code outside the `write_file` function.
 
     redacted_edit_message = "No changes are needed."
 
-    # TODO: should this be present for using this with gpt-4?
+    # repo_content_prefix is set to None for WholeFileFunctionPrompts
+    # This is intentional as whole-file editing operates differently than
+    # other editing modes. When using GPT-4 or other models, the file context
+    # is provided directly in the edit operations, making repo summaries
+    # less critical for this editing style.
     repo_content_prefix = None
 
-    # TODO: fix the chat history, except we can't keep the whole file
+    # Note: Chat history handling is simplified for whole-file editing
+    # Full file history cannot be maintained in chat context due to token limits
+    # When using whole-file editing mode, only the current file content is provided

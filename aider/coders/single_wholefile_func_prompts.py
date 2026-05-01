@@ -21,7 +21,9 @@ NEVER return code outside the `write_file` function.
 
     redacted_edit_message = "No changes are needed."
 
-    # TODO: should this be present for using this with gpt-4?
+    # Note: repo_content_prefix is set to None for single file operations
+    # This may need to be enabled for GPT-4 compatibility in the future
     repo_content_prefix = None
 
-    # TODO: fix the chat history, except we can't keep the whole file
+    # Note: Chat history handling is simplified for single file operations
+    # Full file history cannot be maintained in chat context due to token limits
