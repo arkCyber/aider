@@ -63,4 +63,19 @@ class ContextCoder(Coder):
         return True
 
     def check_for_file_mentions(self, content):
-        pass
+        """
+        Check if file mentions are present in the content.
+        
+        Args:
+            content: Content to check for file mentions
+            
+        Returns:
+            List of mentioned files or empty list if none found
+        """
+        if not content or not content.strip():
+            return []
+        
+        # Get file mentions from the content
+        mentioned_files = self.get_file_mentions(content, ignore_current=True)
+        
+        return mentioned_files

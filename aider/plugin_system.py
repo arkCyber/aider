@@ -118,8 +118,15 @@ class BasePlugin(ABC):
         Called when the plugin is loaded.
         
         Implement plugin initialization logic here.
+        
+        This method should:
+        - Initialize plugin resources
+        - Register plugin commands
+        - Set up plugin hooks
+        - Validate plugin configuration
+        - Perform any necessary setup operations
         """
-        pass
+        raise NotImplementedError("Subclasses must implement on_load()")
     
     @abstractmethod
     def on_unload(self) -> None:
@@ -127,8 +134,15 @@ class BasePlugin(ABC):
         Called when the plugin is unloaded.
         
         Implement plugin cleanup logic here.
+        
+        This method should:
+        - Release plugin resources
+        - Unregister plugin commands
+        - Clean up plugin hooks
+        - Close any open connections
+        - Perform any necessary cleanup operations
         """
-        pass
+        raise NotImplementedError("Subclasses must implement on_unload()")
     
     def get_commands(self) -> Dict[str, Callable]:
         """
@@ -245,7 +259,11 @@ class PluginManager:
                 description=f"Plugin from {plugin_path.name}",
                 entry_point=plugin_path.stem.capitalize() + "Plugin",
             )
-        except Exception:
+        except (FileNotFoundError, ImportError, AttributeError, ValueError) as e:
+            # FileNotFoundError: plugin file not found
+            # ImportError: plugin module import failed
+            # AttributeError: plugin structure invalid
+            # ValueError: plugin configuration invalid
             return None
     
     def load_plugin(self, name: str, config: Optional[Dict[str, Any]] = None) -> bool:

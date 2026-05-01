@@ -26,4 +26,17 @@ class HelpCoder(Coder):
         return []
 
     def apply_edits(self, edits):
+        """
+        Apply edits to files.
+        
+        Args:
+            edits: List of edits to apply
+            
+        Note:
+            HelpCoder does not apply edits as it only provides
+            interactive help and documentation. This method
+            is a no-op for the HelpCoder.
+        """
+        # HelpCoder is read-only and does not apply file edits
+        # It only displays help information and documentation
         pass

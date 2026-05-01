@@ -93,8 +93,15 @@ class NotificationChannelBase(ABC):
             
         Returns:
             True if successful, False otherwise
+            
+        This method should:
+        - Validate the notification content
+        - Format the notification according to channel requirements
+        - Send the notification through the appropriate channel
+        - Handle send failures gracefully
+        - Return success status
         """
-        pass
+        raise NotImplementedError("Subclasses must implement send()")
     
     @abstractmethod
     def validate_config(self) -> bool:
@@ -103,8 +110,14 @@ class NotificationChannelBase(ABC):
         
         Returns:
             True if configuration is valid, False otherwise
+            
+        This method should:
+        - Check required configuration fields
+        - Validate configuration values
+        - Test connection if applicable
+        - Return validation status
         """
-        pass
+        raise NotImplementedError("Subclasses must implement validate_config()")
 
 
 class EmailChannel(NotificationChannelBase):
