@@ -3527,6 +3527,7 @@ theme:
             - clean <file_path>: Clean up code formatting and imports
             - quality <file_path>: Analyze code quality metrics
             - analyze <file_path>: Start real-time code analysis
+            - errors <file_path>: Detect errors and issues
             
         Args:
             args: Refactoring command in format "<command> [args]"
@@ -3707,10 +3708,44 @@ theme:
                 self.io.tool_output(f"  File: {results['file_path']}", log_only=False)
                 self.io.tool_output(f"  Status: {results['status']}", log_only=False)
                 self.io.tool_output(f"  {results['message']}", log_only=False)
+                
+                if 'quality_metrics' in results:
+                    metrics = results['quality_metrics']
+                    self.io.tool_output(f"\n  Quality metrics:", log_only=False)
+                    self.io.tool_output(f"    Complexity: {metrics.get('complexity', 'N/A')}", log_only=False)
+                    self.io.tool_output(f"    Comment ratio: {metrics.get('comment_ratio', 0):.2%}", log_only=False)
+            
+            elif command == 'errors':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /refactor errors <file_path>")
+                    return
+                
+                file_path = parts[1]
+                results = self.coder.index_manager.detect_errors(file_path)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Error detection failed: {results.get('error', 'Unknown error')}")
+                    return
+                
+                self.io.tool_output(f"\n🔍 Error detection for {results['file_path']}:", log_only=False)
+                self.io.tool_output(f"  Total issues: {results['total_issues']}", log_only=False)
+                
+                if results['errors']:
+                    self.io.tool_output(f"\n  Errors ({len(results['errors'])}):", log_only=False)
+                    for error in results['errors']:
+                        self.io.tool_output(f"    • Line {error['line']}: {error['message']}", log_only=False)
+                
+                if results['warnings']:
+                    self.io.tool_output(f"\n  Warnings ({len(results['warnings'])}):", log_only=False)
+                    for warning in results['warnings'][:10]:  # Limit to first 10
+                        self.io.tool_output(f"    • Line {warning['line']}: {warning['message']}", log_only=False)
+                    
+                    if len(results['warnings']) > 10:
+                        self.io.tool_output(f"    ... and {len(results['warnings']) - 10} more", log_only=False)
             
             else:
                 self.io.tool_error(f"Unknown command: {command}")
-                self.io.tool_output("Available commands: rename, batch, multi-edit, extract, clean, quality, analyze", log_only=False)
+                self.io.tool_output("Available commands: rename, batch, multi-edit, extract, clean, quality, analyze, errors", log_only=False)
                 self.log_command_end("cmd_refactor", "error", f"Unknown command: {command}")
                 return
             
