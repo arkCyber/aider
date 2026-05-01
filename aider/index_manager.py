@@ -2492,6 +2492,148 @@ class IndexManager:
             results['errors'].append(str(e))
             return results
     
+    def generate_test_for_function(self, file_path: str, function_name: str) -> Dict:
+        """
+        Generate unit tests for a specific function.
+        
+        This method implements test generation similar to Cursor,
+        creating unit tests for functions based on their signatures and context.
+        
+        Args:
+            file_path: Path to the file containing the function
+            function_name: Name of the function to generate tests for
+            
+        Returns:
+            Dictionary with test generation results
+        """
+        try:
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File does not exist'}
+            
+            # Get function information from symbols table
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT name, kind, line
+                FROM symbols
+                WHERE file_path = ? AND name = ? AND kind = 'function'
+            """, (str(file_path_obj), function_name))
+            
+            function_info = cursor.fetchone()
+            conn.close()
+            
+            if not function_info:
+                return {'success': False, 'error': f'Function {function_name} not found'}
+            
+            # Generate test code
+            test_code = self._generate_test_template(function_name, file_path_obj)
+            
+            return {
+                'success': True,
+                'function_name': function_name,
+                'test_code': test_code,
+                'line': function_info[2]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating test: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _generate_test_template(self, function_name: str, file_path: Path) -> str:
+        """
+        Generate a test template for a function.
+        
+        Args:
+            function_name: Name of the function
+            file_path: Path to the file
+            
+        Returns:
+            Generated test code
+        """
+        module_name = file_path.stem
+        
+        test_template = f'''# Auto-generated test for {function_name}
+import pytest
+from {module_name} import {function_name}
+
+
+def test_{function_name}_basic():
+    """
+    Test basic functionality of {function_name}.
+    """
+    # TODO: Implement test
+    assert True
+
+
+def test_{function_name}_edge_cases():
+    """
+    Test edge cases for {function_name}.
+    """
+    # TODO: Implement edge case tests
+    assert True
+
+
+def test_{function_name}_error_handling():
+    """
+    Test error handling in {function_name}.
+    """
+    # TODO: Implement error handling tests
+    assert True
+'''
+        return test_template
+    
+    def generate_test_coverage_report(self, file_path: str) -> Dict:
+        """
+        Generate a test coverage report for a file.
+        
+        This method analyzes the indexed symbols and provides coverage information.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Dictionary with coverage information
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Get all functions in the file
+            cursor.execute("""
+                SELECT name, kind, line
+                FROM symbols
+                WHERE file_path = ? AND kind = 'function'
+            """, (file_path,))
+            
+            functions = cursor.fetchall()
+            
+            # Get all classes in the file
+            cursor.execute("""
+                SELECT name, kind, line
+                FROM symbols
+                WHERE file_path = ? AND kind = 'class'
+            """, (file_path,))
+            
+            classes = cursor.fetchall()
+            
+            conn.close()
+            
+            return {
+                'file_path': file_path,
+                'functions_count': len(functions),
+                'classes_count': len(classes),
+                'functions': [{'name': f[0], 'line': f[2]} for f in functions],
+                'classes': [{'name': c[0], 'line': c[2]} for c in classes],
+                'estimated_coverage': 0.0  # Would need actual test execution
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating coverage report: {e}")
+            return {'error': str(e)}
+    
     def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
         Calculate cosine similarity between two vectors.

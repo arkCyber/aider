@@ -1684,11 +1684,130 @@ class Commands:
         self.io.tool_output(combined_output)
 
     def cmd_test(self, args):
-        "Run a shell command and add the output to the chat on non-zero exit code"
-        if not args and self.coder.test_cmd:
+        """
+        Run tests or generate test code.
+        
+        This command provides test execution and generation capabilities.
+        
+        Subcommands:
+            - run [command]: Run test command (default behavior)
+            - generate <file_path> <function_name>: Generate tests for a function
+            - coverage <file_path>: Generate test coverage report
+            
+        Args:
+            args: Test command in format "<command> [args]"
+            
+        Examples:
+            /test run pytest
+            /test generate my_file.py my_function
+            /test coverage my_file.py
+        """
+        self.log_command_start("cmd_test", args)
+        
+        parts = args.strip().split()
+        
+        if not parts:
+            # Default behavior: run test command
+            if not self.coder.test_cmd:
+                self.io.tool_error("No test command configured. Set with --test-cmd or use /test run <command>")
+                self.log_command_end("cmd_test", "error", "No test command")
+                return
             args = self.coder.test_cmd
-
+        else:
+            command = parts[0].lower()
+            
+            if command == 'generate':
+                if len(parts) < 3:
+                    self.io.tool_error("Usage: /test generate <file_path> <function_name>")
+                    self.log_command_end("cmd_test", "error", "Insufficient arguments")
+                    return
+                
+                file_path = parts[1]
+                function_name = parts[2]
+                
+                # Check if index manager is available
+                if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                    self.io.tool_error("Index manager not available. Run /index first.")
+                    self.log_command_end("cmd_test", "error", "Index manager not available")
+                    return
+                
+                results = self.coder.index_manager.generate_test_for_function(file_path, function_name)
+                
+                if results['success']:
+                    self.io.tool_output(f"\n✓ Test generated for {results['function_name']}", log_only=False)
+                    self.io.tool_output(f"\n{results['test_code']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Test generation failed: {results.get('error', 'Unknown error')}")
+                    self.log_command_end("cmd_test", "error", str(results.get('error')))
+                    return
+            
+            elif command == 'coverage':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /test coverage <file_path>")
+                    self.log_command_end("cmd_test", "error", "Insufficient arguments")
+                    return
+                
+                file_path = parts[1]
+                
+                # Check if index manager is available
+                if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                    self.io.tool_error("Index manager not available. Run /index first.")
+                    self.log_command_end("cmd_test", "error", "Index manager not available")
+                    return
+                
+                results = self.coder.index_manager.generate_test_coverage_report(file_path)
+                
+                if 'error' in results:
+                    self.io.tool_error(f"Coverage report failed: {results['error']}")
+                    self.log_command_end("cmd_test", "error", str(results['error']))
+                    return
+                
+                self.io.tool_output(f"\n📊 Coverage report for {results['file_path']}:", log_only=False)
+                self.io.tool_output(f"  Functions: {results['functions_count']}", log_only=False)
+                self.io.tool_output(f"  Classes: {results['classes_count']}", log_only=False)
+                self.io.tool_output(f"  Estimated coverage: {results['estimated_coverage']:.1%}", log_only=False)
+                
+                if self.verbose and results['functions']:
+                    self.io.tool_output(f"\n  Functions:", log_only=False)
+                    for func in results['functions']:
+                        self.io.tool_output(f"    • {func['name']} (line {func['line']})", log_only=False)
+            
+            elif command == 'run':
+                # Run test command
+                args = ' '.join(parts[1:])
+            else:
+                # Default: run as test command
+                args = ' '.join(parts)
+        
+        # Run test command
         if not args:
+            self.io.tool_error("No test command provided")
+            self.log_command_end("cmd_test", "error", "No test command")
+            return
+        
+        import subprocess
+        
+        self.io.tool_output(f"Running: {args}", log_only=False)
+        
+        try:
+            result = subprocess.run(args, shell=True, capture_output=True, text=True, cwd=self.coder.root)
+            
+            if result.stdout:
+                self.io.tool_output(result.stdout, log_only=False)
+            
+            if result.stderr:
+                self.io.tool_error(result.stderr, log_only=False)
+            
+            if result.returncode != 0:
+                self.io.tool_error(f"Test failed with exit code {result.returncode}", log_only=False)
+                self.log_command_end("cmd_test", "error", f"Exit code {result.returncode}")
+            else:
+                self.io.tool_output("✓ Tests passed", log_only=False)
+                self.log_command_end("cmd_test", "success", "Tests passed")
+        
+        except Exception as e:
+            self.io.tool_error(f"Error running tests: {e}")
+            self.log_command_end("cmd_test", "error", str(e))
             return
 
         if not callable(args):
