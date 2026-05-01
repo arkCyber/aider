@@ -172,7 +172,7 @@ class IndexManager:
         if self.verbose and self.io:
             self.io.tool_output(f"IndexManager initialized with max_memory_mb: {self.max_memory_mb}", log_only=False)
     
-    def _init_database(self):
+    def _init_database(self) -> None:
         """Initialize the index database with proper schema."""
         try:
             conn = sqlite3.connect(str(self.index_db_path))
@@ -290,7 +290,7 @@ class IndexManager:
             logger.error(f"Failed to initialize index database: {e}")
             raise
     
-    def _load_state(self):
+    def _load_state(self) -> None:
         """Load previous index state if exists."""
         try:
             if self.index_state_path.exists():
@@ -300,7 +300,7 @@ class IndexManager:
         except Exception as e:
             logger.warning(f"Failed to load index state: {e}")
     
-    def _save_state(self):
+    def _save_state(self) -> None:
         """Save current index state."""
         try:
             state = {
@@ -792,7 +792,7 @@ class IndexManager:
         
         return self.stats
     
-    def _validate_index(self):
+    def _validate_index(self) -> None:
         """Validate index integrity."""
         try:
             conn = sqlite3.connect(str(self.index_db_path))
@@ -820,7 +820,7 @@ class IndexManager:
         except Exception as e:
             logger.error(f"Index validation failed: {e}")
     
-    def _print_summary(self):
+    def _print_summary(self) -> None:
         """Print index summary to user."""
         self.io.tool_output("\n" + "─" * 60, log_only=False)
         self.io.tool_output("✅ Index Complete", log_only=False, bold=True)
@@ -901,7 +901,7 @@ class IndexManager:
         
         return self.stats
     
-    def cancel(self):
+    def cancel(self) -> None:
         """Cancel ongoing indexing operation."""
         logger.info("Cancelling index operation")
         self._cancel_flag = True
