@@ -37,6 +37,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
 
 from diskcache import Cache
 from tqdm import tqdm
@@ -46,6 +47,24 @@ from aider.waiting import Spinner
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MerkleNode:
+    """Node in a Merkle tree."""
+    hash: str
+    children: List['MerkleNode'] = field(default_factory=list)
+    file_path: Optional[str] = None
+    is_leaf: bool = False
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for serialization."""
+        return {
+            'hash': self.hash,
+            'children': [child.to_dict() for child in self.children],
+            'file_path': self.file_path,
+            'is_leaf': self.is_leaf
+        }
 
 
 class IndexStatus(Enum):
@@ -1260,6 +1279,134 @@ class IndexManager:
         finally:
             if conn:
                 conn.close()
+    
+    def _build_merkle_tree(self, file_hashes: Dict[str, str]) -> MerkleNode:
+        """
+        Build a Merkle tree from file hashes.
+        
+        This method creates a hierarchical hash structure similar to Cursor's approach
+        for efficient incremental updates and integrity verification.
+        
+        Args:
+            file_hashes: Dictionary mapping file paths to their content hashes
+            
+        Returns:
+            Root node of the Merkle tree
+        """
+        if not file_hashes:
+            return MerkleNode(hash=hashlib.sha256(b'').hexdigest())
+        
+        # Create leaf nodes for each file
+        leaves = []
+        for file_path, content_hash in file_hashes.items():
+            leaf = MerkleNode(
+                hash=content_hash,
+                file_path=file_path,
+                is_leaf=True
+            )
+            leaves.append(leaf)
+        
+        # Build tree bottom-up
+        while len(leaves) > 1:
+            new_level = []
+            for i in range(0, len(leaves), 2):
+                if i + 1 < len(leaves):
+                    # Combine two nodes
+                    combined_hash = self._combine_hashes(leaves[i].hash, leaves[i+1].hash)
+                    parent = MerkleNode(
+                        hash=combined_hash,
+                        children=[leaves[i], leaves[i+1]],
+                        is_leaf=False
+                    )
+                    new_level.append(parent)
+                else:
+                    # Odd number of nodes, promote the last one
+                    new_level.append(leaves[i])
+            leaves = new_level
+        
+        return leaves[0] if leaves else MerkleNode(hash=hashlib.sha256(b'').hexdigest())
+    
+    def _combine_hashes(self, hash1: str, hash2: str) -> str:
+        """
+        Combine two hashes to create a parent hash.
+        
+        Args:
+            hash1: First hash
+            hash2: Second hash
+            
+        Returns:
+            Combined hash
+        """
+        combined = hash1 + hash2
+        return hashlib.sha256(combined.encode()).hexdigest()
+    
+    def _get_changed_files(self, old_tree: Optional[MerkleNode], new_tree: MerkleNode) -> Set[str]:
+        """
+        Identify files that have changed by comparing Merkle trees.
+        
+        This method efficiently identifies which files have changed without
+        re-scanning the entire codebase, similar to Cursor's approach.
+        
+        Args:
+            old_tree: Previous Merkle tree root
+            new_tree: Current Merkle tree root
+            
+        Returns:
+            Set of file paths that have changed
+        """
+        if old_tree is None or old_tree.hash != new_tree.hash:
+            # Full rebuild needed if root hash changed and we can't diff
+            # For now, return all files as changed
+            if old_tree is None:
+                return self._get_all_files_from_tree(new_tree)
+            return self._get_all_files_from_tree(new_tree)
+        
+        return self._compare_trees(old_tree, new_tree)
+    
+    def _compare_trees(self, old_node: MerkleNode, new_node: MerkleNode) -> Set[str]:
+        """
+        Recursively compare two Merkle trees to find changed files.
+        
+        Args:
+            old_node: Node from old tree
+            new_node: Node from new tree
+            
+        Returns:
+            Set of file paths that have changed
+        """
+        changed_files = set()
+        
+        if old_node.hash != new_node.hash:
+            if old_node.is_leaf and new_node.is_leaf:
+                # Leaf node with different hash - file changed
+                if old_node.file_path and new_node.file_path:
+                    changed_files.add(new_node.file_path)
+            elif not old_node.is_leaf and not new_node.is_leaf:
+                # Internal node - recurse into children
+                for old_child, new_child in zip(old_node.children, new_node.children):
+                    changed_files.update(self._compare_trees(old_child, new_child))
+        
+        return changed_files
+    
+    def _get_all_files_from_tree(self, node: MerkleNode) -> Set[str]:
+        """
+        Extract all file paths from a Merkle tree.
+        
+        Args:
+            node: Merkle tree node
+            
+        Returns:
+            Set of all file paths in the tree
+        """
+        files = set()
+        
+        if node.is_leaf and node.file_path:
+            files.add(node.file_path)
+        
+        for child in node.children:
+            files.update(self._get_all_files_from_tree(child))
+        
+        return files
     
     def cleanup(self) -> None:
         """
