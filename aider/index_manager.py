@@ -196,11 +196,28 @@ class IndexManager:
                 )
             """)
             
+            # Create chunks table for code chunking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_path TEXT,
+                    chunk_type TEXT,
+                    chunk_name TEXT,
+                    start_line INTEGER,
+                    end_line INTEGER,
+                    content_hash TEXT,
+                    content TEXT,
+                    UNIQUE(file_path, chunk_type, chunk_name, content_hash)
+                )
+            """)
+            
             # Create indexes for better query performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_references_symbol ON references(symbol_name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_references_from ON references(from_file)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(content_hash)")
             
             # Create metadata table
             cursor.execute("""
@@ -366,6 +383,15 @@ class IndexManager:
             else:
                 # For non-Python files, just record metadata
                 self._record_file_metadata(filepath, size, mtime, file_hash)
+            
+            # Chunk code for better semantic understanding
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                chunks = self._chunk_code(filepath, content)
+                self._store_chunks(filepath, chunks)
+            except Exception as e:
+                logger.error(f"Error chunking {filepath}: {e}")
             
             return True, None
             
@@ -910,6 +936,140 @@ class IndexManager:
         except Exception as e:
             logger.error(f"Error getting file symbols: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
+    
+    def _chunk_code(self, filepath: Path, content: str) -> List[Dict]:
+        """
+        Chunk code into semantically meaningful pieces.
+        
+        This method splits code into logical chunks (functions, classes, etc.)
+        similar to Cursor's approach for better semantic understanding.
+        
+        Args:
+            filepath: Path to the file
+            content: File content
+            
+        Returns:
+            List of chunks with metadata
+        """
+        chunks = []
+        
+        if filepath.suffix == '.py':
+            # Use AST to chunk Python code
+            try:
+                import ast
+                tree = ast.parse(content, filename=str(filepath))
+                
+                for node in ast.walk(tree):
+                    chunk_info = None
+                    
+                    if isinstance(node, ast.FunctionDef):
+                        chunk_info = {
+                            'type': 'function',
+                            'name': node.name,
+                            'start_line': node.lineno,
+                            'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                            'content': ast.get_source_segment(content, node)
+                        }
+                    elif isinstance(node, ast.AsyncFunctionDef):
+                        chunk_info = {
+                            'type': 'async_function',
+                            'name': node.name,
+                            'start_line': node.lineno,
+                            'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                            'content': ast.get_source_segment(content, node)
+                        }
+                    elif isinstance(node, ast.ClassDef):
+                        chunk_info = {
+                            'type': 'class',
+                            'name': node.name,
+                            'start_line': node.lineno,
+                            'end_line': node.end_lineno if hasattr(node, 'end_lineno') else node.lineno,
+                            'content': ast.get_source_segment(content, node)
+                        }
+                    
+                    if chunk_info and chunk_info['content']:
+                        chunk_info['hash'] = self._get_content_hash(chunk_info['content'])
+                        chunks.append(chunk_info)
+                        
+            except Exception as e:
+                logger.error(f"Error chunking {filepath}: {e}")
+                # Fallback: use file as single chunk
+                chunks.append({
+                    'type': 'file',
+                    'name': filepath.name,
+                    'start_line': 1,
+                    'end_line': content.count('\n') + 1,
+                    'content': content,
+                    'hash': self._get_content_hash(content)
+                })
+        else:
+            # For non-Python files, chunk by logical sections or use whole file
+            lines = content.split('\n')
+            chunk_size = 100  # lines per chunk
+            
+            for i in range(0, len(lines), chunk_size):
+                chunk_content = '\n'.join(lines[i:i+chunk_size])
+                chunks.append({
+                    'type': 'section',
+                    'name': f"{filepath.name}_chunk_{i//chunk_size}",
+                    'start_line': i + 1,
+                    'end_line': min(i + chunk_size, len(lines)),
+                    'content': chunk_content,
+                    'hash': self._get_content_hash(chunk_content)
+                })
+        
+        return chunks
+    
+    def _get_content_hash(self, content: str) -> str:
+        """
+        Get hash of content for caching and deduplication.
+        
+        Args:
+            content: Content to hash
+            
+        Returns:
+            SHA256 hash of content
+        """
+        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    
+    def _store_chunks(self, filepath: Path, chunks: List[Dict]) -> None:
+        """
+        Store code chunks in the database.
+        
+        Args:
+            filepath: Path to the file
+            chunks: List of chunk dictionaries
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Clear existing chunks for this file
+            cursor.execute("DELETE FROM chunks WHERE file_path = ?", (str(filepath),))
+            
+            # Store new chunks
+            for chunk in chunks:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO chunks 
+                    (file_path, chunk_type, chunk_name, start_line, end_line, content_hash, content)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(filepath),
+                    chunk['type'],
+                    chunk['name'],
+                    chunk['start_line'],
+                    chunk['end_line'],
+                    chunk['hash'],
+                    chunk['content']
+                ))
+            
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error storing chunks for {filepath}: {e}")
         finally:
             if conn:
                 conn.close()
