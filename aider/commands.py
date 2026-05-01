@@ -4141,7 +4141,10 @@ theme:
             - reference <symbol_name>: Search for references to a symbol
             - file <file_path>: Get all symbols in a specific file
             - semantic <query>: Semantic search using vector embeddings
-           
+            - goto <symbol_name> [file]: Jump to symbol definition
+            - hierarchy <file_path>: Get symbol hierarchy for a file
+            - structure: Get project file structure
+            
         Args:
             args: Search command in format "<command> [args]"
             
@@ -4248,9 +4251,68 @@ theme:
                         self.io.tool_output(f"    Content: {result['content'][:100]}...", log_only=False)
                         self.io.tool_output("", log_only=False)
             
+            elif command == 'goto':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /search goto <symbol_name> [file]")
+                    return
+                
+                symbol_name = parts[1]
+                file_path = parts[2] if len(parts) > 2 else None
+                
+                definition = self.coder.index_manager.jump_to_definition(symbol_name, file_path)
+                
+                if not definition:
+                    self.io.tool_output(f"No definition found for '{symbol_name}'", log_only=False)
+                else:
+                    self.io.tool_output(f"\n📍 Definition of '{definition['name']}':", log_only=False)
+                    self.io.tool_output(f"  Kind: {definition['kind']}", log_only=False)
+                    self.io.tool_output(f"  File: {definition['file_path']}", log_only=False)
+                    self.io.tool_output(f"  Line: {definition['line']}", log_only=False)
+            
+            elif command == 'hierarchy':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /search hierarchy <file_path>")
+                    return
+                
+                file_path = parts[1]
+                hierarchy = self.coder.index_manager.get_symbol_hierarchy(file_path)
+                
+                self.io.tool_output(f"\n📁 Symbol hierarchy for {file_path}:", log_only=False)
+                
+                if hierarchy['classes']:
+                    self.io.tool_output(f"  Classes ({len(hierarchy['classes'])}):", log_only=False)
+                    for cls in hierarchy['classes']:
+                        self.io.tool_output(f"    • {cls['name']} (line {cls['line']})", log_only=False)
+                
+                if hierarchy['functions']:
+                    self.io.tool_output(f"  Functions ({len(hierarchy['functions'])}):", log_only=False)
+                    for func in hierarchy['functions']:
+                        self.io.tool_output(f"    • {func['name']} (line {func['line']})", log_only=False)
+                
+                if hierarchy['variables']:
+                    self.io.tool_output(f"  Variables ({len(hierarchy['variables'])}):", log_only=False)
+                    for var in hierarchy['variables']:
+                        self.io.tool_output(f"    • {var['name']} (line {var['line']})", log_only=False)
+            
+            elif command == 'structure':
+                structure = self.coder.index_manager.get_file_structure()
+                
+                self.io.tool_output(f"\n📂 Project structure:", log_only=False)
+                self.io.tool_output(f"  Files: {len(structure['files'])}", log_only=False)
+                self.io.tool_output(f"  Directories: {len(structure['directories'])}", log_only=False)
+                
+                if self.verbose:
+                    self.io.tool_output(f"\n  Directories:", log_only=False)
+                    for dir_path in structure['directories'][:20]:
+                        self.io.tool_output(f"    • {dir_path}", log_only=False)
+                    
+                    self.io.tool_output(f"\n  Files:", log_only=False)
+                    for file_info in structure['files'][:20]:
+                        self.io.tool_output(f"    • {file_info['path']} ({file_info['size']} bytes)", log_only=False)
+            
             else:
                 self.io.tool_error(f"Unknown command: {command}")
-                self.io.tool_output("Available commands: symbol, reference, file, semantic", log_only=False)
+                self.io.tool_output("Available commands: symbol, reference, file, semantic, goto, hierarchy, structure", log_only=False)
                 self.log_command_end("cmd_search", "error", f"Unknown command: {command}")
                 return
             

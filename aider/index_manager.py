@@ -1915,6 +1915,203 @@ class IndexManager:
             logger.error(f"Error in semantic search: {e}")
             return []
     
+    def jump_to_definition(self, symbol_name: str, file_path: Optional[str] = None) -> Optional[Dict]:
+        """
+        Find the definition of a symbol.
+        
+        This method implements jump-to-definition functionality similar to Cursor,
+        using the symbol extraction data from the index.
+        
+        Args:
+            symbol_name: Name of the symbol to find
+            file_path: Optional file path to narrow search
+            
+        Returns:
+            Dictionary with symbol definition information or None if not found
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            if file_path:
+                cursor.execute("""
+                    SELECT name, kind, file_path, line
+                    FROM symbols
+                    WHERE name = ? AND file_path = ?
+                    ORDER BY line ASC
+                    LIMIT 1
+                """, (symbol_name, file_path))
+            else:
+                cursor.execute("""
+                    SELECT name, kind, file_path, line
+                    FROM symbols
+                    WHERE name = ?
+                    ORDER BY line ASC
+                    LIMIT 1
+                """, (symbol_name,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                return {
+                    'name': result[0],
+                    'kind': result[1],
+                    'file_path': result[2],
+                    'line': result[3]
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding definition: {e}")
+            return None
+    
+    def find_references(self, symbol_name: str, file_path: Optional[str] = None) -> List[Dict]:
+        """
+        Find all references to a symbol.
+        
+        This method implements find-references functionality similar to Cursor,
+        using the cross-file reference tracking data.
+        
+        Args:
+            symbol_name: Name of the symbol to find references for
+            file_path: Optional file path to narrow search
+            
+        Returns:
+            List of reference locations
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            if file_path:
+                cursor.execute("""
+                    SELECT from_file, symbol_name, line
+                    FROM references
+                    WHERE symbol_name = ? AND from_file = ?
+                    ORDER BY line ASC
+                """, (symbol_name, file_path))
+            else:
+                cursor.execute("""
+                    SELECT from_file, symbol_name, line
+                    FROM references
+                    WHERE symbol_name = ?
+                    ORDER BY line ASC
+                """, (symbol_name,))
+            
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'from_file': row[0],
+                    'symbol_name': row[1],
+                    'line': row[2]
+                })
+            
+            conn.close()
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error finding references: {e}")
+            return []
+    
+    def get_symbol_hierarchy(self, file_path: str) -> Dict:
+        """
+        Get the symbol hierarchy for a file.
+        
+        This method provides a hierarchical view of symbols (classes, functions, methods)
+        similar to Cursor's symbol hierarchy view.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Dictionary representing the symbol hierarchy
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT name, kind, line, parent_name
+                FROM symbols
+                WHERE file_path = ?
+                ORDER BY line ASC
+            """, (file_path,))
+            
+            hierarchy = {
+                'file_path': file_path,
+                'classes': [],
+                'functions': [],
+                'variables': []
+            }
+            
+            for row in cursor.fetchall():
+                name, kind, line, parent_name = row
+                
+                symbol_info = {
+                    'name': name,
+                    'line': line,
+                    'parent': parent_name
+                }
+                
+                if kind == 'class':
+                    hierarchy['classes'].append(symbol_info)
+                elif kind == 'function':
+                    hierarchy['functions'].append(symbol_info)
+                elif kind == 'variable':
+                    hierarchy['variables'].append(symbol_info)
+            
+            conn.close()
+            return hierarchy
+            
+        except Exception as e:
+            logger.error(f"Error getting symbol hierarchy: {e}")
+            return {'file_path': file_path, 'classes': [], 'functions': [], 'variables': []}
+    
+    def get_file_structure(self) -> Dict:
+        """
+        Get the overall project file structure.
+        
+        This method provides a hierarchical view of the project structure,
+        similar to Cursor's file explorer.
+        
+        Returns:
+            Dictionary representing the project structure
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT file_path, size
+                FROM files
+                ORDER BY file_path ASC
+            """)
+            
+            structure = {'files': [], 'directories': set()}
+            
+            for row in cursor.fetchall():
+                file_path, size = row
+                
+                structure['files'].append({
+                    'path': file_path,
+                    'size': size
+                })
+                
+                # Track directories
+                dir_path = str(Path(file_path).parent)
+                structure['directories'].add(dir_path)
+            
+            structure['directories'] = sorted(list(structure['directories']))
+            conn.close()
+            
+            return structure
+            
+        except Exception as e:
+            logger.error(f"Error getting file structure: {e}")
+            return {'files': [], 'directories': []}
+    
     def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
         Calculate cosine similarity between two vectors.
