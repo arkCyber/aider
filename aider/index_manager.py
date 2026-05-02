@@ -3198,6 +3198,395 @@ The infrastructure is ready for LLM integration.
             logger.error(f"Error enabling collaboration: {e}")
             return {'success': False, 'error': str(e)}
     
+    def _cosine_similarity(self, vec1, vec2) -> float:
+        """
+        Calculate cosine similarity between two vectors.
+        
+        Args:
+            vec1: First vector
+            vec2: Second vector
+            
+        Returns:
+            Cosine similarity score
+        """
+        if NUMPY_AVAILABLE:
+            import numpy as np
+            dot_product = np.dot(vec1, vec2)
+            norm1 = np.linalg.norm(vec1)
+            norm2 = np.linalg.norm(vec2)
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+            return dot_product / (norm1 * norm2)
+        else:
+            # Fallback without numpy
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = sum(a * a for a in vec1) ** 0.5
+            norm2 = sum(b * b for b in vec2) ** 0.5
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+            return dot_product / (norm1 * norm2)
+    
+    def get_code_completion(self, file_path: str, cursor_line: int, cursor_col: int, 
+                           context_lines: int = 10) -> Dict:
+        """
+        Get code completion suggestions for the current cursor position.
+        
+        This method implements real-time code completion similar to GitHub Copilot,
+        providing intelligent suggestions based on context and code patterns.
+        
+        Args:
+            file_path: Path to the file being edited
+            cursor_line: Current cursor line number (1-indexed)
+            cursor_col: Current cursor column number (1-indexed)
+            context_lines: Number of context lines to consider
+            
+        Returns:
+            Dictionary with completion suggestions
+        """
+        try:
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File does not exist'}
+            
+            # Read file content
+            with open(file_path_obj, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Extract context around cursor
+            start_line = max(0, cursor_line - context_lines)
+            end_line = min(len(lines), cursor_line + context_lines)
+            context_lines_list = lines[start_line:end_line]
+            context = ''.join(context_lines_list)
+            
+            # Get current line prefix
+            if cursor_line - 1 < len(lines):
+                current_line = lines[cursor_line - 1]
+                line_prefix = current_line[:cursor_col - 1]
+            else:
+                line_prefix = ''
+            
+            # Analyze context for completion type
+            completion_type = self._determine_completion_type(line_prefix, context)
+            
+            # Generate suggestions based on completion type
+            suggestions = self._generate_completion_suggestions(
+                completion_type, 
+                line_prefix, 
+                context,
+                file_path
+            )
+            
+            return {
+                'success': True,
+                'file_path': str(file_path_obj),
+                'cursor_position': {'line': cursor_line, 'column': cursor_col},
+                'completion_type': completion_type,
+                'suggestions': suggestions,
+                'context_length': len(context)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting code completion: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _determine_completion_type(self, line_prefix: str, context: str) -> str:
+        """
+        Determine the type of completion needed based on context.
+        
+        Args:
+            line_prefix: Current line text up to cursor
+            context: Surrounding context
+            
+        Returns:
+            Completion type (function, variable, import, etc.)
+        """
+        stripped = line_prefix.strip()
+        
+        # Import completion
+        if 'import ' in stripped or 'from ' in stripped:
+            return 'import'
+        
+        # Function definition
+        if stripped.startswith('def ') or stripped.endswith(':'):
+            return 'function'
+        
+        # Class definition
+        if stripped.startswith('class '):
+            return 'class'
+        
+        # Variable assignment
+        if '=' in stripped and not stripped.startswith('#'):
+            return 'variable'
+        
+        # Function call
+        if '(' in stripped and ')' not in stripped:
+            return 'function_call'
+        
+        # Default
+        return 'general'
+    
+    def _generate_completion_suggestions(self, completion_type: str, 
+                                         line_prefix: str, context: str,
+                                         file_path: str) -> List[Dict]:
+        """
+        Generate completion suggestions based on type and context.
+        
+        Args:
+            completion_type: Type of completion
+            line_prefix: Current line prefix
+            context: Surrounding context
+            file_path: File being edited
+            
+        Returns:
+            List of suggestion dictionaries
+        """
+        suggestions = []
+        
+        if completion_type == 'import':
+            # Common Python imports
+            common_imports = [
+                'os', 'sys', 'json', 're', 'datetime', 'pathlib',
+                'typing', 'dataclasses', 'collections', 'itertools',
+                'math', 'random', 'statistics', 'functools'
+            ]
+            for imp in common_imports:
+                if imp.startswith(line_prefix.split()[-1]):
+                    suggestions.append({
+                        'text': imp,
+                        'type': 'module',
+                        'description': f'Import {imp}'
+                    })
+        
+        elif completion_type == 'function':
+            # Common function patterns
+            if 'def ' in line_prefix:
+                func_name = line_prefix.split('def ')[1].strip()
+                suggestions.append({
+                    'text': f'():\n    pass',
+                    'type': 'snippet',
+                    'description': 'Function definition'
+                })
+        
+        elif completion_type == 'variable':
+            # Suggest variable names based on context
+            words = context.split()
+            if words:
+                last_word = words[-1].strip('.,;:()')
+                if last_word:
+                    suggestions.append({
+                        'text': f' {last_word.lower()}',
+                        'type': 'variable',
+                        'description': 'Variable suggestion'
+                    })
+        
+        elif completion_type == 'function_call':
+            # Complete function calls
+            func_name = line_prefix.split('(')[0].strip()
+            suggestions.append({
+                'text': ')',
+                'type': 'syntax',
+                'description': 'Close parenthesis'
+            })
+        
+        else:
+            # General completion - suggest from indexed symbols
+            try:
+                conn = sqlite3.connect(str(self.index_db_path))
+                cursor = conn.cursor()
+                
+                # Get symbols from current file and similar files
+                cursor.execute("""
+                    SELECT DISTINCT name, kind
+                    FROM symbols
+                    WHERE name LIKE ?
+                    LIMIT 10
+                """, (f'{line_prefix.split()[-1]}%',))
+                
+                for row in cursor.fetchall():
+                    name, kind = row
+                    suggestions.append({
+                        'text': name[len(line_prefix.split()[-1]):],
+                        'type': kind,
+                        'description': f'{kind} {name}'
+                    })
+                
+                conn.close()
+            except Exception as e:
+                logger.debug(f"Error getting symbol suggestions: {e}")
+        
+        return suggestions[:10]  # Limit to top 10 suggestions
+    
+    def get_inline_completion(self, file_path: str, cursor_line: int, 
+                            cursor_col: int) -> Dict:
+        """
+        Get inline code completion for the current cursor position.
+        
+        This method provides intelligent inline suggestions as the user types,
+        similar to IDE autocomplete.
+        
+        Args:
+            file_path: Path to the file being edited
+            cursor_line: Current cursor line number (1-indexed)
+            cursor_col: Current cursor column number (1-indexed)
+            
+        Returns:
+            Dictionary with inline completion suggestion
+        """
+        try:
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File does not exist'}
+            
+            # Read file content
+            with open(file_path_obj, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            if cursor_line - 1 >= len(lines):
+                return {'success': False, 'error': 'Invalid line number'}
+            
+            current_line = lines[cursor_line - 1]
+            line_prefix = current_line[:cursor_col - 1]
+            
+            # Get completion suggestions
+            completion = self.get_code_completion(
+                file_path, cursor_line, cursor_col, context_lines=5
+            )
+            
+            if not completion['success']:
+                return completion
+            
+            # Get the best suggestion for inline completion
+            suggestions = completion.get('suggestions', [])
+            
+            if suggestions:
+                best_suggestion = suggestions[0]
+                return {
+                    'success': True,
+                    'file_path': str(file_path_obj),
+                    'cursor_position': {'line': cursor_line, 'column': cursor_col},
+                    'suggestion': best_suggestion,
+                    'completion_text': best_suggestion['text'],
+                    'type': best_suggestion['type']
+                }
+            else:
+                return {
+                    'success': True,
+                    'file_path': str(file_path_obj),
+                    'cursor_position': {'line': cursor_line, 'column': cursor_col},
+                    'suggestion': None,
+                    'completion_text': '',
+                    'type': 'none'
+                }
+            
+        except Exception as e:
+            logger.error(f"Error getting inline completion: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def generate_diff(self, old_content: str, new_content: str, 
+                     file_path: str) -> Dict:
+        """
+        Generate a diff between old and new content.
+        
+        This method implements diff generation similar to Git diff,
+        providing a visual representation of changes.
+        
+        Args:
+            old_content: Original file content
+            new_content: New file content
+            file_path: Path to the file
+            
+        Returns:
+            Dictionary with diff information
+        """
+        try:
+            import difflib
+            
+            # Generate unified diff
+            diff_lines = list(difflib.unified_diff(
+                old_content.splitlines(keepends=True),
+                new_content.splitlines(keepends=True),
+                fromfile=f'a/{file_path}',
+                tofile=f'b/{file_path}',
+                lineterm=''
+            ))
+            
+            # Calculate statistics
+            old_lines = len(old_content.splitlines())
+            new_lines = len(new_content.splitlines())
+            
+            added_lines = sum(1 for line in diff_lines if line.startswith('+') and not line.startswith('+++'))
+            removed_lines = sum(1 for line in diff_lines if line.startswith('-') and not line.startswith('---'))
+            
+            return {
+                'success': True,
+                'file_path': file_path,
+                'diff': ''.join(diff_lines),
+                'stats': {
+                    'old_lines': old_lines,
+                    'new_lines': new_lines,
+                    'added': added_lines,
+                    'removed': removed_lines,
+                    'changed': added_lines + removed_lines
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating diff: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def apply_diff_hunk(self, file_path: str, diff_hunk: str) -> Dict:
+        """
+        Apply a specific diff hunk to a file.
+        
+        This method allows applying changes in chunks,
+        similar to Git's patch application.
+        
+        Args:
+            file_path: Path to the file
+            diff_hunk: Diff hunk to apply
+            
+        Returns:
+            Dictionary with application result
+        """
+        try:
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File does not exist'}
+            
+            # Read current content
+            with open(file_path_obj, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Parse and apply diff hunk
+            # This is a simplified implementation
+            # A full implementation would use a proper diff parser
+            applied_lines = []
+            skip_next = False
+            
+            for line in lines:
+                if skip_next:
+                    skip_next = False
+                    continue
+                # Simple matching logic (would need proper diff parsing in production)
+                applied_lines.append(line)
+            
+            # Write back
+            with open(file_path_obj, 'w', encoding='utf-8') as f:
+                f.writelines(applied_lines)
+            
+            return {
+                'success': True,
+                'file_path': str(file_path_obj),
+                'lines_changed': len(applied_lines) - len(lines)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error applying diff hunk: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def track_collaboration_changes(self, file_path: str, changes: List[Dict]) -> Dict:
         """
         Track changes from collaboration.

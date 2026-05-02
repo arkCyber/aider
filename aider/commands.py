@@ -3894,6 +3894,180 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
+    def cmd_complete(self, args):
+        """
+        Get code completion suggestions.
+        
+        This command provides real-time code completion similar to GitHub Copilot,
+        offering intelligent suggestions based on context.
+        
+        Subcommands:
+            - code <file_path> <line> <col>: Get code completion suggestions
+            - inline <file_path> <line> <col>: Get inline completion
+            
+        Args:
+            args: Completion command in format "<command> <file_path> <line> <col>"
+            
+        Examples:
+            /complete code main.py 10 5
+            /complete inline main.py 10 5
+        """
+        self.log_command_start("cmd_complete", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_complete", "error", "Index manager not available")
+                return
+            
+            parts = args.strip().split()
+            if len(parts) < 4:
+                self.io.tool_error("Usage: /complete <command> <file_path> <line> <col>")
+                self.log_command_end("cmd_complete", "error", "Invalid arguments")
+                return
+            
+            command = parts[0].lower()
+            file_path = parts[1]
+            line = int(parts[2])
+            col = int(parts[3])
+            
+            if command == 'code':
+                results = self.coder.index_manager.get_code_completion(file_path, line, col)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Code completion failed: {results.get('error', 'Unknown error')}")
+                    self.log_command_end("cmd_complete", "error", results.get('error'))
+                    return
+                
+                self.io.tool_output(f"\n💡 Code completion for {results['file_path']}", log_only=False)
+                self.io.tool_output(f"  Position: Line {results['cursor_position']['line']}, Col {results['cursor_position']['column']}", log_only=False)
+                self.io.tool_output(f"  Type: {results['completion_type']}", log_only=False)
+                
+                suggestions = results.get('suggestions', [])
+                if suggestions:
+                    self.io.tool_output(f"\n  Suggestions ({len(suggestions)}):", log_only=False)
+                    for i, suggestion in enumerate(suggestions, 1):
+                        self.io.tool_output(f"    {i}. {suggestion['text']}", log_only=False)
+                        self.io.tool_output(f"       Type: {suggestion['type']}", log_only=False)
+                        self.io.tool_output(f"       {suggestion['description']}", log_only=False)
+                else:
+                    self.io.tool_output(f"\n  No suggestions available", log_only=False)
+            
+            elif command == 'inline':
+                results = self.coder.index_manager.get_inline_completion(file_path, line, col)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Inline completion failed: {results.get('error', 'Unknown error')}")
+                    self.log_command_end("cmd_complete", "error", results.get('error'))
+                    return
+                
+                suggestion = results.get('suggestion')
+                if suggestion:
+                    self.io.tool_output(f"\n💡 Inline completion:", log_only=False)
+                    self.io.tool_output(f"  Text: {results['completion_text']}", log_only=False)
+                    self.io.tool_output(f"  Type: {results['type']}", log_only=False)
+                    self.io.tool_output(f"  Description: {suggestion['description']}", log_only=False)
+                else:
+                    self.io.tool_output(f"\n  No inline suggestion available", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_output("Available commands: code, inline", log_only=False)
+                self.log_command_end("cmd_complete", "error", f"Unknown command: {command}")
+                return
+            
+            self.log_command_end("cmd_complete", "success", f"Command {command} completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_complete", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+    
+    def cmd_diff(self, args):
+        """
+        Generate and view code differences.
+        
+        This command provides diff viewing capabilities similar to Git diff,
+        allowing you to visualize changes between file versions.
+        
+        Subcommands:
+            - generate <file_path>: Generate diff for current changes
+            - view <file_path> <old_content> <new_content>: View diff between contents
+            
+        Args:
+            args: Diff command in format "<command> [args]"
+            
+        Examples:
+            /diff generate main.py
+        """
+        self.log_command_start("cmd_diff", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_diff", "error", "Index manager not available")
+                return
+            
+            parts = args.strip().split()
+            if not parts:
+                self.io.tool_error("Usage: /diff <command> [args]")
+                self.log_command_end("cmd_diff", "error", "No command specified")
+                return
+            
+            command = parts[0].lower()
+            
+            if command == 'generate':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /diff generate <file_path>")
+                    self.log_command_end("cmd_diff", "error", "Missing file path")
+                    return
+                
+                file_path = parts[1]
+                
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        new_content = f.read()
+                except Exception as e:
+                    self.io.tool_error(f"Error reading file: {e}")
+                    self.log_command_end("cmd_diff", "error", str(e))
+                    return
+                
+                old_content = ""
+                
+                results = self.coder.index_manager.generate_diff(old_content, new_content, file_path)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Diff generation failed: {results.get('error', 'Unknown error')}")
+                    self.log_command_end("cmd_diff", "error", results.get('error'))
+                    return
+                
+                self.io.tool_output(f"\n📊 Diff for {results['file_path']}", log_only=False)
+                self.io.tool_output(f"\n  Stats:", log_only=False)
+                stats = results['stats']
+                self.io.tool_output(f"    Old lines: {stats['old_lines']}", log_only=False)
+                self.io.tool_output(f"    New lines: {stats['new_lines']}", log_only=False)
+                self.io.tool_output(f"    Added: {stats['added']}", log_only=False)
+                self.io.tool_output(f"    Removed: {stats['removed']}", log_only=False)
+                self.io.tool_output(f"    Changed: {stats['changed']}", log_only=False)
+                
+                self.io.tool_output(f"\n  Diff:", log_only=False)
+                self.io.tool_output(results['diff'], log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_output("Available commands: generate", log_only=False)
+                self.log_command_end("cmd_diff", "error", f"Unknown command: {command}")
+                return
+            
+            self.log_command_end("cmd_diff", "success", f"Command {command} completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_diff", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_env(self, args):
         "Manage virtual environments"
         import subprocess
