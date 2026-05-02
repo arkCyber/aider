@@ -2640,7 +2640,8 @@ if (window.EventSource) {
             if not hasattr(self, '_sessions'):
                 self._sessions = {}
             
-            session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            # Generate unique session ID with microseconds to avoid collisions
+            session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
             
             self._sessions[session_id] = {
                 'id': session_id,
