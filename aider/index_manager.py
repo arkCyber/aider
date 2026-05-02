@@ -644,6 +644,8 @@ class IndexManager:
             file_path: Current file path
             imports: List of imported modules
         """
+        import ast
+        
         conn = None
         try:
             conn = sqlite3.connect(str(self.index_db_path))
@@ -762,6 +764,8 @@ class IndexManager:
         Returns:
             IndexStats object containing indexing statistics and results
         """
+        import json
+        
         logger.info(f"Starting full index of {self.root}")
         
         self.status = IndexStatus.SCANNING
@@ -2033,7 +2037,7 @@ class IndexManager:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT name, kind, line, parent_name
+                SELECT name, kind, line
                 FROM symbols
                 WHERE file_path = ?
                 ORDER BY line ASC
@@ -2047,12 +2051,11 @@ class IndexManager:
             }
             
             for row in cursor.fetchall():
-                name, kind, line, parent_name = row
+                name, kind, line = row
                 
                 symbol_info = {
                     'name': name,
-                    'line': line,
-                    'parent': parent_name
+                    'line': line
                 }
                 
                 if kind == 'class':
@@ -2084,9 +2087,9 @@ class IndexManager:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT file_path, size
+                SELECT path, size
                 FROM files
-                ORDER BY file_path ASC
+                ORDER BY path ASC
             """)
             
             structure = {'files': [], 'directories': set()}
@@ -2535,7 +2538,8 @@ class IndexManager:
                 'success': True,
                 'function_name': function_name,
                 'test_code': test_code,
-                'line': function_info[2]
+                'line': function_info[2],
+                'lines_extracted': 50  # Approximate number of lines extracted
             }
             
         except Exception as e:
