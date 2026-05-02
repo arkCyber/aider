@@ -4255,6 +4255,196 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
+    def cmd_database(self, args):
+        """
+        Execute SQL queries on a database.
+        
+        This command provides database integration similar to Cursor's database features,
+        allowing users to execute SQL queries and view database schema.
+        
+        Subcommands:
+            - query <db_path> <sql>: Execute SQL query
+            - schema <db_path>: Get database schema
+            
+        Args:
+            args: Database command in format "<command> [args]"
+            
+        Examples:
+            /database query ./mydb.db "SELECT * FROM users"
+            /database schema ./mydb.db
+        """
+        self.log_command_start("cmd_database", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_database", "error", "Index manager not available")
+                return
+            
+            parts = args.strip().split()
+            if not parts:
+                self.io.tool_error("Usage: /database <command> [args]")
+                self.log_command_end("cmd_database", "error", "No command specified")
+                return
+            
+            command = parts[0].lower()
+            
+            if command == 'query':
+                if len(parts) < 3:
+                    self.io.tool_error("Usage: /database query <db_path> <sql>")
+                    self.log_command_end("cmd_database", "error", "Missing arguments")
+                    return
+                
+                db_path = parts[1]
+                # Join remaining parts as SQL query
+                sql_query = ' '.join(parts[2:])
+                
+                results = self.coder.index_manager.execute_sql_query(sql_query, db_path)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Query failed: {results.get('error', 'Unknown error')}")
+                    self.log_command_end("cmd_database", "error", results.get('error'))
+                    return
+                
+                self.io.tool_output(f"\n✓ Query executed successfully!", log_only=False)
+                self.io.tool_output(f"  Database: {results.get('query', 'N/A')}", log_only=False)
+                
+                if 'columns' in results:
+                    self.io.tool_output(f"  Columns: {', '.join(results['columns'])}", log_only=False)
+                    self.io.tool_output(f"  Rows returned: {results['row_count']}", log_only=False)
+                    
+                    if results['results']:
+                        self.io.tool_output(f"\n  Results:", log_only=False)
+                        for i, row in enumerate(results['results'][:10], 1):
+                            self.io.tool_output(f"    {i}. {row}", log_only=False)
+                        if len(results['results']) > 10:
+                            self.io.tool_output(f"    ... and {len(results['results']) - 10} more rows", log_only=False)
+                else:
+                    self.io.tool_output(f"  {results.get('message', 'N/A')}", log_only=False)
+            
+            elif command == 'schema':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /database schema <db_path>")
+                    self.log_command_end("cmd_database", "error", "Missing database path")
+                    return
+                
+                db_path = parts[1]
+                
+                results = self.coder.index_manager.get_database_schema(db_path)
+                
+                if not results['success']:
+                    self.io.tool_error(f"Schema retrieval failed: {results.get('error', 'Unknown error')}")
+                    self.log_command_end("cmd_database", "error", results.get('error'))
+                    return
+                
+                self.io.tool_output(f"\n✓ Schema retrieved successfully!", log_only=False)
+                self.io.tool_output(f"  Database: {results['database']}", log_only=False)
+                self.io.tool_output(f"  Tables: {len(results['tables'])}", log_only=False)
+                
+                self.io.tool_output(f"\n  Tables:", log_only=False)
+                for table in results['tables']:
+                    self.io.tool_output(f"    • {table}", log_only=False)
+                    table_info = results['schema'][table]
+                    self.io.tool_output(f"      Columns: {len(table_info['columns'])}")
+                    for col in table_info['columns']:
+                        self.io.tool_output(f"        - {col['name']} ({col['type']})", log_only=False)
+                    if 'foreign_keys' in table_info:
+                        self.io.tool_output(f"      Foreign keys: {len(table_info['foreign_keys'])}")
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_output("Available commands: query, schema", log_only=False)
+                self.log_command_end("cmd_database", "error", f"Unknown command: {command}")
+                return
+            
+            self.log_command_end("cmd_database", "success", f"Command {command} completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_database", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+    
+    def cmd_api(self, args):
+        """
+        Test HTTP API requests.
+        
+        This command provides API client functionality similar to Cursor's API testing,
+        allowing users to test REST API endpoints.
+        
+        Args:
+            args: API command in format "<method> <url> [headers] [body]"
+            
+        Examples:
+            /api GET https://api.example.com/users
+            /api POST https://api.example.com/users '{"name":"John"}'
+        """
+        self.log_command_start("cmd_api", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_api", "error", "Index manager not available")
+                return
+            
+            parts = args.strip().split()
+            if len(parts) < 2:
+                self.io.tool_error("Usage: /api <method> <url> [headers] [body]")
+                self.log_command_end("cmd_api", "error", "Missing arguments")
+                return
+            
+            method = parts[0].upper()
+            url = parts[1]
+            
+            # Parse headers and body if provided
+            headers = None
+            body = None
+            
+            if len(parts) > 2:
+                # Try to parse as JSON
+                try:
+                    import json
+                    headers = json.loads(parts[2])
+                    if len(parts) > 3:
+                        body = ' '.join(parts[3:])
+                except json.JSONDecodeError:
+                    # Treat as body
+                    body = ' '.join(parts[2:])
+            
+            self.io.tool_output(f"🌐 Testing {method} request to {url}...", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            results = self.coder.index_manager.test_api_request(url, method, headers, body)
+            
+            if not results['success']:
+                self.io.tool_error(f"Request failed: {results.get('error', 'Unknown error')}")
+                if 'status_code' in results:
+                    self.io.tool_output(f"Status code: {results['status_code']}", log_only=False)
+                self.log_command_end("cmd_api", "error", results.get('error'))
+                return
+            
+            self.io.tool_output(f"\n✓ Request successful!", log_only=False)
+            self.io.tool_output(f"  Method: {results['method']}", log_only=False)
+            self.io.tool_output(f"  Status code: {results['status_code']}", log_only=False)
+            self.io.tool_output(f"  Body type: {results['body_type']}", log_only=False)
+            
+            self.io.tool_output(f"\n  Response:", log_only=False)
+            if results['body_type'] == 'json':
+                import json
+                self.io.tool_output(json.dumps(results['body'], indent=2), log_only=False)
+            else:
+                self.io.tool_output(str(results['body'])[:500], log_only=False)
+                if len(str(results['body'])) > 500:
+                    self.io.tool_output(f"... (truncated)", log_only=False)
+            
+            self.log_command_end("cmd_api", "success", f"Request completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_api", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_env(self, args):
         "Manage virtual environments"
         import subprocess

@@ -4223,6 +4223,247 @@ npm-debug.log*
             return float(match.group(1))
         return 0.0
     
+    def execute_sql_query(self, query: str, db_path: str = None, 
+                        db_type: str = 'sqlite') -> Dict:
+        """
+        Execute SQL query on a database.
+        
+        This method provides database integration similar to Cursor's database features,
+        allowing users to execute SQL queries and view results.
+        
+        Args:
+            query: SQL query to execute
+            db_path: Path to database file (for SQLite)
+            db_type: Type of database ('sqlite', 'postgresql', 'mysql')
+            
+        Returns:
+            Dictionary with query results
+        """
+        try:
+            import sqlite3
+            import json
+            
+            results = []
+            columns = []
+            
+            if db_type == 'sqlite':
+                if not db_path:
+                    return {'success': False, 'error': 'Database path required for SQLite'}
+                
+                db_path_obj = Path(db_path)
+                if not db_path_obj.exists():
+                    return {'success': False, 'error': f'Database file not found: {db_path}'}
+                
+                conn = sqlite3.connect(str(db_path_obj))
+                cursor = conn.cursor()
+                
+                try:
+                    cursor.execute(query)
+                    
+                    # Get column names
+                    if cursor.description:
+                        columns = [desc[0] for desc in cursor.description]
+                    
+                    # Fetch results
+                    rows = cursor.fetchall()
+                    results = [dict(zip(columns, row)) for row in rows]
+                    
+                    # Get affected rows for non-SELECT queries
+                    if not columns:
+                        affected_rows = cursor.rowcount
+                        return {
+                            'success': True,
+                            'query': query,
+                            'affected_rows': affected_rows,
+                            'message': f'Query affected {affected_rows} rows'
+                        }
+                    
+                    conn.close()
+                    
+                    return {
+                        'success': True,
+                        'query': query,
+                        'columns': columns,
+                        'results': results,
+                        'row_count': len(results)
+                    }
+                    
+                except sqlite3.Error as e:
+                    conn.close()
+                    return {'success': False, 'error': f'SQL error: {str(e)}'}
+                    
+            else:
+                return {'success': False, 'error': f'Database type {db_type} not yet supported'}
+                
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def get_database_schema(self, db_path: str, db_type: str = 'sqlite') -> Dict:
+        """
+        Get database schema information.
+        
+        This method retrieves schema information including tables, columns,
+        and relationships from the database.
+        
+        Args:
+            db_path: Path to database file (for SQLite)
+            db_type: Type of database ('sqlite', 'postgresql', 'mysql')
+            
+        Returns:
+            Dictionary with schema information
+        """
+        try:
+            import sqlite3
+            
+            if db_type == 'sqlite':
+                if not db_path:
+                    return {'success': False, 'error': 'Database path required for SQLite'}
+                
+                db_path_obj = Path(db_path)
+                if not db_path_obj.exists():
+                    return {'success': False, 'error': f'Database file not found: {db_path}'}
+                
+                conn = sqlite3.connect(str(db_path_obj))
+                cursor = conn.cursor()
+                
+                schema = {}
+                
+                # Get all tables
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tables = [row[0] for row in cursor.fetchall()]
+                
+                for table in tables:
+                    # Get columns for each table
+                    cursor.execute(f"PRAGMA table_info({table});")
+                    columns = cursor.fetchall()
+                    
+                    table_info = {
+                        'columns': []
+                    }
+                    
+                    for col in columns:
+                        col_info = {
+                            'name': col[1],
+                            'type': col[2],
+                            'not_null': bool(col[3]),
+                            'default_value': col[4],
+                            'primary_key': bool(col[5])
+                        }
+                        table_info['columns'].append(col_info)
+                    
+                    # Get foreign keys
+                    cursor.execute(f"PRAGMA foreign_key_list({table});")
+                    foreign_keys = cursor.fetchall()
+                    
+                    if foreign_keys:
+                        table_info['foreign_keys'] = []
+                        for fk in foreign_keys:
+                            fk_info = {
+                                'id': fk[0],
+                                'table': fk[2],
+                                'from': fk[3],
+                                'to': fk[4]
+                            }
+                            table_info['foreign_keys'].append(fk_info)
+                    
+                    schema[table] = table_info
+                
+                conn.close()
+                
+                return {
+                    'success': True,
+                    'database': db_path,
+                    'tables': tables,
+                    'schema': schema
+                }
+                
+            else:
+                return {'success': False, 'error': f'Database type {db_type} not yet supported'}
+                
+        except Exception as e:
+            logger.error(f"Error getting database schema: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def test_api_request(self, url: str, method: str = 'GET', 
+                        headers: Dict = None, body: str = None) -> Dict:
+        """
+        Test an HTTP API request.
+        
+        This method provides API client functionality similar to Cursor's API testing,
+        allowing users to test REST API endpoints.
+        
+        Args:
+            url: API endpoint URL
+            method: HTTP method (GET, POST, PUT, DELETE, etc.)
+            headers: Request headers
+            body: Request body (for POST, PUT, etc.)
+            
+        Returns:
+            Dictionary with response information
+        """
+        try:
+            import urllib.request
+            import urllib.error
+            import json
+            
+            if headers is None:
+                headers = {}
+            
+            # Prepare request
+            data = body.encode('utf-8') if body else None
+            
+            req = urllib.request.Request(url, data=data, method=method)
+            
+            # Add headers
+            for key, value in headers.items():
+                req.add_header(key, value)
+            
+            # Send request
+            with urllib.request.urlopen(req, timeout=30) as response:
+                response_body = response.read().decode('utf-8')
+                response_headers = dict(response.headers)
+                
+                # Try to parse JSON response
+                try:
+                    response_json = json.loads(response_body)
+                    return {
+                        'success': True,
+                        'url': url,
+                        'method': method,
+                        'status_code': response.status,
+                        'headers': response_headers,
+                        'body': response_json,
+                        'body_type': 'json'
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        'success': True,
+                        'url': url,
+                        'method': method,
+                        'status_code': response.status,
+                        'headers': response_headers,
+                        'body': response_body,
+                        'body_type': 'text'
+                    }
+                    
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8') if e.fp else str(e)
+            return {
+                'success': False,
+                'error': f'HTTP Error: {e.code} - {e.reason}',
+                'status_code': e.code,
+                'body': error_body
+            }
+        except urllib.error.URLError as e:
+            return {
+                'success': False,
+                'error': f'URL Error: {str(e)}'
+            }
+        except Exception as e:
+            logger.error(f"Error testing API request: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def track_collaboration_changes(self, file_path: str, changes: List[Dict]) -> Dict:
         """
         Track changes from collaboration.
