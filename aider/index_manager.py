@@ -282,19 +282,22 @@ class IndexManager:
                 )
             """)
             
-            # Create symbols table
+            # Create symbols table with indexes
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS symbols (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_path TEXT,
-                    name TEXT,
-                    kind TEXT,
-                    line INTEGER,
+                    file_path TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    line INTEGER NOT NULL,
                     UNIQUE(file_path, name, kind, line)
                 )
             """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind)")
             
-            # Create references table for cross-file tracking
+            # Create references table for cross-file tracking with indexes
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS "references" (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -305,8 +308,11 @@ class IndexManager:
                     UNIQUE(from_file, to_file, symbol_name, line)
                 )
             """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_references_from_file ON \"references\"(from_file)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_references_to_file ON \"references\"(to_file)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_references_symbol_name ON \"references\"(symbol_name)")
             
-            # Create chunks table for code chunking
+            # Create chunks table for code chunking with indexes
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS chunks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -317,9 +323,12 @@ class IndexManager:
                     end_line INTEGER,
                     content_hash TEXT,
                     content TEXT,
-                    UNIQUE(file_path, chunk_type, chunk_name, content_hash)
+                    UNIQUE(file_path, chunk_type, chunk_name)
                 )
             """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file_path ON chunks(file_path)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_type ON chunks(chunk_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(content_hash)")
             
             # Create git_history table for Git integration
             cursor.execute("""
@@ -369,7 +378,6 @@ class IndexManager:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_references_symbol ON "references"(symbol_name)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_references_from ON "references"(from_file)')
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_hash ON chunks(content_hash)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_history_sha ON git_history(commit_sha)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_file_history_sha ON git_file_history(commit_sha)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_file_history_file ON git_file_history(file_path)")
@@ -616,25 +624,24 @@ class IndexManager:
                 elif isinstance(node, ast.Import):
                     for alias in node.names:
                         imports.append(alias.name)
+                        self._add_symbol(cursor, rel_fname, alias.name, 'import', node.lineno)
                 elif isinstance(node, ast.ImportFrom):
-                    module = node.module if node.module else ''
                     for alias in node.names:
-                        imports.append(f"{module}.{alias.name}")
+                        imports.append(alias.name)
+                        self._add_symbol(cursor, rel_fname, alias.name, 'import', node.lineno)
+                elif isinstance(node, ast.Global):
+                    for name in node.names:
+                        self._add_symbol(cursor, rel_fname, name, 'global', node.lineno)
             
             conn.commit()
-            
-            # Record file metadata
-            self._record_file_metadata(filepath, filepath.stat().st_size, 
-                                      os.path.getmtime(filepath), 
-                                      self._get_file_hash(filepath))
+            conn.close()
             
         except Exception as e:
-            logger.error(f"Unexpected error extracting symbols from {filepath}: {e}")
+            logger.error(f"Error extracting symbols from {filepath}: {e}")
         finally:
-            # Ensure database connection is always closed
             if conn:
                 conn.close()
-    
+
     def _track_function_calls(self, node, file_path: str, imports: List[str]):
         """
         Track function calls for cross-file reference tracking.
@@ -665,7 +672,7 @@ class IndexManager:
                             for result in results:
                                 to_file = result[0]
                                 cursor.execute("""
-                                    INSERT OR IGNORE INTO references (from_file, to_file, symbol_name, line)
+                                    INSERT OR IGNORE INTO "references" (from_file, to_file, symbol_name, line)
                                     VALUES (?, ?, ?, ?)
                                 """, (file_path, to_file, child.func.id, child.lineno))
             
@@ -1104,7 +1111,7 @@ class IndexManager:
             cursor = conn.cursor()
             
             cursor.execute(
-                "SELECT from_file, to_file, symbol_name, line FROM references WHERE symbol_name = ?",
+                "SELECT from_file, to_file, symbol_name, line FROM \"references\" WHERE symbol_name = ?",
                 (symbol_name,)
             )
             
@@ -1992,14 +1999,14 @@ class IndexManager:
             if file_path:
                 cursor.execute("""
                     SELECT from_file, symbol_name, line
-                    FROM references
+                    FROM "references"
                     WHERE symbol_name = ? AND from_file = ?
                     ORDER BY line ASC
                 """, (symbol_name, file_path))
             else:
                 cursor.execute("""
                     SELECT from_file, symbol_name, line
-                    FROM references
+                    FROM "references"
                     WHERE symbol_name = ?
                     ORDER BY line ASC
                 """, (symbol_name,))
@@ -2231,7 +2238,7 @@ class IndexManager:
             # Find all references
             cursor.execute("""
                 SELECT from_file, line
-                FROM references
+                FROM "references"
                 WHERE symbol_name = ?
             """, (old_name,))
             
