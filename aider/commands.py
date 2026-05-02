@@ -5014,6 +5014,185 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
+    def cmd_workspace(self, args):
+        """
+        Manage workspaces for organizing sessions and tasks.
+        
+        This command implements Windsurf's Workspace Management (Spaces) feature for bundling
+        related sessions, files, and shared context into a single task.
+        
+        Args:
+            args: Workspace command and parameters
+                  Usage: /workspace <action> [parameters]
+                  Actions:
+                    - create <name> [description]
+                    - list
+                    - sessions <workspace_id>
+                    - add-session <workspace_id> <session_id>
+                    - remove-session <workspace_id> <session_id>
+                    - delete <workspace_id>
+            
+            Examples:
+            /workspace create my-workspace "Project X"
+            /workspace list
+            /workspace sessions workspace_20240502_120000
+            /workspace add-session workspace_20240502_120000 session_20240502_120000
+            /workspace delete workspace_20240502_120000
+        """
+        self.log_command_start("cmd_workspace", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_workspace", "error", "Index manager not available")
+                return
+            
+            if not args or not args.strip():
+                self.io.tool_error("Usage: /workspace <action> [parameters]")
+                self.io.tool_error("Actions: create, list, sessions, add-session, remove-session, delete")
+                self.log_command_end("cmd_workspace", "error", "No action specified")
+                return
+            
+            parts = args.strip().split(maxsplit=1)
+            action = parts[0]
+            
+            if action == 'create':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /workspace create <name> [description]", log_only=False)
+                    self.log_command_end("cmd_workspace", "error", "Missing workspace name")
+                    return
+                
+                name_parts = parts[1].split(maxsplit=1)
+                workspace_name = name_parts[0]
+                description = name_parts[1] if len(name_parts) > 1 else None
+                
+                result = self.coder.index_manager.create_workspace(workspace_name, description)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Workspace created successfully!", log_only=False)
+                    self.io.tool_output(f"  Name: {workspace_name}", log_only=False)
+                    self.io.tool_output(f"  ID: {result['workspace_id']}", log_only=False)
+                    if description:
+                        self.io.tool_output(f"  Description: {description}", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Creation failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_workspace", "success" if result['success'] else "error")
+            
+            elif action == 'list':
+                result = self.coder.index_manager.list_workspaces()
+                if result['success']:
+                    self.io.tool_output(f"\n📦 Workspaces ({result['count']}):", log_only=False)
+                    for workspace in result['workspaces']:
+                        self.io.tool_output(f"  • {workspace['name']}", log_only=False)
+                        self.io.tool_output(f"    ID: {workspace['id']}", log_only=False)
+                        self.io.tool_output(f"    Status: {workspace['status']}", log_only=False)
+                        self.io.tool_output(f"    Sessions: {workspace['session_count']}", log_only=False)
+                        if workspace['description']:
+                            self.io.tool_output(f"    Description: {workspace['description']}", log_only=False)
+                        self.io.tool_output(f"    Created: {workspace['created_at']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Error: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_workspace", "success" if result['success'] else "error")
+            
+            elif action == 'sessions':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /workspace sessions <workspace_id>", log_only=False)
+                    self.log_command_end("cmd_workspace", "error", "Missing workspace ID")
+                    return
+                
+                workspace_id = parts[1]
+                result = self.coder.index_manager.get_workspace_sessions(workspace_id)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n📝 Sessions for {workspace_id} ({result['count']}):", log_only=False)
+                    for session in result['sessions']:
+                        self.io.tool_output(f"  • {session['name']}", log_only=False)
+                        self.io.tool_output(f"    ID: {session['id']}", log_only=False)
+                        self.io.tool_output(f"    Status: {session['status']}", log_only=False)
+                        self.io.tool_output(f"    Tasks: {session['task_count']}", log_only=False)
+                        self.io.tool_output(f"    Added: {session['added_at']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Error: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_workspace", "success" if result['success'] else "error")
+            
+            elif action == 'add-session':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /workspace add-session <workspace_id> <session_id>", log_only=False)
+                    self.log_command_end("cmd_workspace", "error", "Missing parameters")
+                    return
+                
+                id_parts = parts[1].split()
+                if len(id_parts) < 2:
+                    self.io.tool_error("Usage: /workspace add-session <workspace_id> <session_id>", log_only=False)
+                    self.log_command_end("cmd_workspace", "error", "Missing parameters")
+                    return
+                
+                workspace_id = id_parts[0]
+                session_id = id_parts[1]
+                
+                result = self.coder.index_manager.add_session_to_workspace(workspace_id, session_id)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Session added to workspace successfully!", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Addition failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_workspace", "success" if result['success'] else "error")
+            
+            elif action == 'remove-session':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /workspace remove-session <workspace_id> <session_id>", log_only=False)
+                    self.log_command_end("cmd_workspace", "error", "Missing parameters")
+                    return
+                
+                id_parts = parts[1].split()
+                if len(id_parts) < 2:
+                    self.io.tool_error("Usage: /workspace remove-session <workspace_id> <session_id>", log_only=False)
+                    self.log_command_end("cmd_workspace", "error", "Missing parameters")
+                    return
+                
+                workspace_id = id_parts[0]
+                session_id = id_parts[1]
+                
+                result = self.coder.index_manager.remove_session_from_workspace(workspace_id, session_id)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Session removed from workspace successfully!", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Removal failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_workspace", "success" if result['success'] else "error")
+            
+            elif action == 'delete':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /workspace delete <workspace_id>", log_only=False)
+                    self.log_command_end("cmd_workspace", "error", "Missing workspace ID")
+                    return
+                
+                workspace_id = parts[1]
+                result = self.coder.index_manager.delete_workspace(workspace_id)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Workspace deleted successfully!", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Deletion failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_workspace", "success" if result['success'] else "error")
+            
+            else:
+                self.io.tool_error(f"Unknown action: {action}", log_only=False)
+                self.io.tool_error("Actions: create, list, sessions, add-session, remove-session, delete", log_only=False)
+                self.log_command_end("cmd_workspace", "error", f"Unknown action: {action}")
+        
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}", log_only=False)
+            self.log_command_end("cmd_workspace", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_env(self, args):
         "Manage virtual environments"
         import subprocess

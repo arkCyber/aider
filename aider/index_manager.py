@@ -422,6 +422,35 @@ class IndexManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)")
             
+            # Create workspaces table for Workspace Management (Spaces)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS workspaces (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    context TEXT,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active'
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_name ON workspaces(name)")
+            
+            # Create workspace_sessions table for linking workspaces and sessions
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS workspace_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workspace_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    added_at TEXT NOT NULL,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                    UNIQUE(workspace_id, session_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspace_sessions_workspace ON workspace_sessions(workspace_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspace_sessions_session ON workspace_sessions(session_id)")
+            
             # Set index version
             cursor.execute("""
                 INSERT OR REPLACE INTO metadata (key, value)
@@ -3046,6 +3075,297 @@ if (window.EventSource) {
             
         except Exception as e:
             logger.error(f"Error filtering sessions: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def create_workspace(self, workspace_name: str, description: str = None, context: Dict = None) -> Dict:
+        """
+        Create a new workspace for organizing sessions and tasks.
+        
+        This implements Windsurf's Workspace Management (Spaces) feature for bundling
+        related sessions, files, and shared context into a single task.
+        
+        Args:
+            workspace_name: Name of the workspace
+            description: Optional description
+            context: Optional shared context (files, settings, etc.)
+            
+        Returns:
+            Dictionary with workspace creation result
+        """
+        try:
+            # Generate unique workspace ID
+            workspace_id = f"workspace_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+            
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Serialize context to JSON if provided
+            context_json = json.dumps(context) if context else None
+            
+            cursor.execute("""
+                INSERT INTO workspaces (id, name, description, context, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (workspace_id, workspace_name, description, context_json, datetime.now().isoformat(), 'active'))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Workspace created: {workspace_name} ({workspace_id})")
+            
+            return {
+                'success': True,
+                'workspace_id': workspace_id,
+                'workspace_name': workspace_name,
+                'message': f'Workspace {workspace_name} created successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating workspace: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def list_workspaces(self) -> Dict:
+        """
+        List all workspaces.
+        
+        Returns:
+            Dictionary with list of workspaces
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, name, description, context, created_at, status
+                FROM workspaces
+                ORDER BY created_at DESC
+            """)
+            
+            workspaces = []
+            for row in cursor.fetchall():
+                workspace_id, name, description, context_json, created_at, status = row
+                
+                # Get session count for this workspace
+                cursor.execute("SELECT COUNT(*) FROM workspace_sessions WHERE workspace_id = ?", (workspace_id,))
+                session_count = cursor.fetchone()[0]
+                
+                # Deserialize context if present
+                context = json.loads(context_json) if context_json else {}
+                
+                workspaces.append({
+                    'id': workspace_id,
+                    'name': name,
+                    'description': description,
+                    'status': status,
+                    'created_at': created_at,
+                    'session_count': session_count,
+                    'file_count': len(context.get('files', [])) if isinstance(context, dict) else 0
+                })
+            
+            conn.close()
+            
+            return {
+                'success': True,
+                'workspaces': workspaces,
+                'count': len(workspaces)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error listing workspaces: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def add_session_to_workspace(self, workspace_id: str, session_id: str) -> Dict:
+        """
+        Add a session to a workspace.
+        
+        Args:
+            workspace_id: ID of the workspace
+            session_id: ID of the session to add
+            
+        Returns:
+            Dictionary with addition result
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Check if workspace exists
+            cursor.execute("SELECT id FROM workspaces WHERE id = ?", (workspace_id,))
+            if not cursor.fetchone():
+                conn.close()
+                return {'success': False, 'error': f'Workspace {workspace_id} not found'}
+            
+            # Check if session exists
+            cursor.execute("SELECT id FROM sessions WHERE id = ?", (session_id,))
+            if not cursor.fetchone():
+                conn.close()
+                return {'success': False, 'error': f'Session {session_id} not found'}
+            
+            # Check if already linked
+            cursor.execute("""
+                SELECT id FROM workspace_sessions 
+                WHERE workspace_id = ? AND session_id = ?
+            """, (workspace_id, session_id))
+            
+            if cursor.fetchone():
+                conn.close()
+                return {'success': False, 'error': f'Session {session_id} already in workspace {workspace_id}'}
+            
+            # Link session to workspace
+            cursor.execute("""
+                INSERT INTO workspace_sessions (workspace_id, session_id, added_at)
+                VALUES (?, ?, ?)
+            """, (workspace_id, session_id, datetime.now().isoformat()))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Session {session_id} added to workspace {workspace_id}")
+            
+            return {
+                'success': True,
+                'message': f'Session added to workspace successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error adding session to workspace: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def remove_session_from_workspace(self, workspace_id: str, session_id: str) -> Dict:
+        """
+        Remove a session from a workspace.
+        
+        Args:
+            workspace_id: ID of the workspace
+            session_id: ID of the session to remove
+            
+        Returns:
+            Dictionary with removal result
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM workspace_sessions
+                WHERE workspace_id = ? AND session_id = ?
+            """, (workspace_id, session_id))
+            
+            if cursor.rowcount == 0:
+                conn.close()
+                return {'success': False, 'error': f'Session {session_id} not found in workspace {workspace_id}'}
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Session {session_id} removed from workspace {workspace_id}")
+            
+            return {
+                'success': True,
+                'message': f'Session removed from workspace successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error removing session from workspace: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def get_workspace_sessions(self, workspace_id: str) -> Dict:
+        """
+        Get all sessions in a workspace.
+        
+        Args:
+            workspace_id: ID of the workspace
+            
+        Returns:
+            Dictionary with list of sessions
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Check if workspace exists
+            cursor.execute("SELECT id FROM workspaces WHERE id = ?", (workspace_id,))
+            if not cursor.fetchone():
+                conn.close()
+                return {'success': False, 'error': f'Workspace {workspace_id} not found'}
+            
+            cursor.execute("""
+                SELECT s.id, s.name, s.context, s.created_at, s.status, ws.added_at
+                FROM sessions s
+                INNER JOIN workspace_sessions ws ON s.id = ws.session_id
+                WHERE ws.workspace_id = ?
+                ORDER BY ws.added_at ASC
+            """, (workspace_id,))
+            
+            sessions = []
+            for row in cursor.fetchall():
+                session_id, name, context_json, created_at, status, added_at = row
+                
+                # Get task count for this session
+                cursor.execute("SELECT COUNT(*) FROM tasks WHERE session_id = ?", (session_id,))
+                task_count = cursor.fetchone()[0]
+                
+                # Deserialize context if present
+                context = json.loads(context_json) if context_json else {}
+                
+                sessions.append({
+                    'id': session_id,
+                    'name': name,
+                    'status': status,
+                    'created_at': created_at,
+                    'added_at': added_at,
+                    'task_count': task_count,
+                    'file_count': len(context.get('files', [])) if isinstance(context, dict) else 0
+                })
+            
+            conn.close()
+            
+            return {
+                'success': True,
+                'workspace_id': workspace_id,
+                'sessions': sessions,
+                'count': len(sessions)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting workspace sessions: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def delete_workspace(self, workspace_id: str) -> Dict:
+        """
+        Delete a workspace.
+        
+        Args:
+            workspace_id: ID of the workspace to delete
+            
+        Returns:
+            Dictionary with deletion result
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Check if workspace exists
+            cursor.execute("SELECT id FROM workspaces WHERE id = ?", (workspace_id,))
+            if not cursor.fetchone():
+                conn.close()
+                return {'success': False, 'error': f'Workspace {workspace_id} not found'}
+            
+            # Delete workspace (sessions will be unlinked due to CASCADE)
+            cursor.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Workspace deleted: {workspace_id}")
+            
+            return {
+                'success': True,
+                'workspace_id': workspace_id,
+                'message': f'Workspace deleted successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error deleting workspace: {e}")
             return {'success': False, 'error': str(e)}
 
     def get_symbol_hierarchy(self, file_path: str) -> Dict:
