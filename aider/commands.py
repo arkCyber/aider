@@ -4807,6 +4807,8 @@ theme:
                     - add-task <session_id> <task> [type]
                     - update-task <session_id> <task_id> <status>
                     - delete <session_id>
+                    - search <query>
+                    - filter <status>
             
         Examples:
             /session create my-session
@@ -4814,6 +4816,8 @@ theme:
             /session tasks session_20240502_120000
             /session add-task session_20240502_120000 "Refactor code" refactoring
             /session delete session_20240502_120000
+            /session search refactor
+            /session filter active
         """
         self.log_command_start("cmd_session", args)
         
@@ -4955,9 +4959,53 @@ theme:
                 
                 self.log_command_end("cmd_session", "success" if result['success'] else "error")
             
+            elif action == 'search':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /session search <query>", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing search query")
+                    return
+                
+                query = parts[1]
+                result = self.coder.index_manager.search_sessions(query)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n🔍 Search results for '{query}' ({result['count']}):", log_only=False)
+                    for session in result['sessions']:
+                        self.io.tool_output(f"  • {session['name']}", log_only=False)
+                        self.io.tool_output(f"    ID: {session['id']}", log_only=False)
+                        self.io.tool_output(f"    Status: {session['status']}", log_only=False)
+                        self.io.tool_output(f"    Tasks: {session['task_count']}", log_only=False)
+                        self.io.tool_output(f"    Created: {session['created_at']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Error: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_session", "success" if result['success'] else "error")
+            
+            elif action == 'filter':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /session filter <status>", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing status")
+                    return
+                
+                status = parts[1]
+                result = self.coder.index_manager.filter_sessions_by_status(status)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n🎯 Sessions with status '{status}' ({result['count']}):", log_only=False)
+                    for session in result['sessions']:
+                        self.io.tool_output(f"  • {session['name']}", log_only=False)
+                        self.io.tool_output(f"    ID: {session['id']}", log_only=False)
+                        self.io.tool_output(f"    Status: {session['status']}", log_only=False)
+                        self.io.tool_output(f"    Tasks: {session['task_count']}", log_only=False)
+                        self.io.tool_output(f"    Created: {session['created_at']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Error: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_session", "success" if result['success'] else "error")
+            
             else:
                 self.io.tool_error(f"Unknown action: {action}", log_only=False)
-                self.io.tool_error("Actions: create, list, tasks, add-task, update-task, delete", log_only=False)
+                self.io.tool_error("Actions: create, list, tasks, add-task, update-task, delete, search, filter", log_only=False)
                 self.log_command_end("cmd_session", "error", f"Unknown action: {action}")
         
         except Exception as e:

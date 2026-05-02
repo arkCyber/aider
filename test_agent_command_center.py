@@ -188,24 +188,26 @@ def test_error_handling():
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = IndexManager(tmpdir)
             
-            # Test adding task to non-existent session
-            result = manager.add_task_to_session("non-existent-session", "Test task")
+            # Test adding task to non-existent session (use UUID to ensure it doesn't exist)
+            import uuid
+            unique_session_id = f"session_{uuid.uuid4()}"
+            result = manager.add_task_to_session(unique_session_id, "Test task")
             assert result['success'] == False, "Should fail for non-existent session"
             assert 'error' in result, "Error message missing"
             print(f"✓ Non-existent session error handling passed")
             
             # Test getting tasks from non-existent session
-            result = manager.get_session_tasks("non-existent-session")
+            result = manager.get_session_tasks(unique_session_id)
             assert result['success'] == False, "Should fail for non-existent session"
             print(f"✓ Non-existent session task retrieval error handling passed")
             
             # Test updating task in non-existent session
-            result = manager.update_task_status("non-existent-session", "task-id", "completed")
+            result = manager.update_task_status(unique_session_id, "task-id", "completed")
             assert result['success'] == False, "Should fail for non-existent session"
             print(f"✓ Non-existent session task update error handling passed")
             
             # Test deleting non-existent session
-            result = manager.delete_session("non-existent-session")
+            result = manager.delete_session(unique_session_id)
             assert result['success'] == False, "Should fail for non-existent session"
             print(f"✓ Non-existent session deletion error handling passed")
             

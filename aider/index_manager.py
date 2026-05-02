@@ -392,6 +392,36 @@ class IndexManager:
                 )
             """)
             
+            # Create sessions table for Agent Command Center
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    context TEXT,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active'
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_name ON sessions(name)")
+            
+            # Create tasks table for session tasks
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)")
+            
             # Set index version
             cursor.execute("""
                 INSERT OR REPLACE INTO metadata (key, value)
@@ -2628,6 +2658,7 @@ if (window.EventSource) {
         Create a new session for task management.
         
         This implements a simplified version of Windsurf's Agent Command Center for session management.
+        Sessions are now persisted to the database.
         
         Args:
             session_name: Name of the session
@@ -2637,21 +2668,22 @@ if (window.EventSource) {
             Dictionary with session creation result
         """
         try:
-            if not hasattr(self, '_sessions'):
-                self._sessions = {}
-            
             # Generate unique session ID with microseconds to avoid collisions
             session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
             
-            self._sessions[session_id] = {
-                'id': session_id,
-                'name': session_name,
-                'context': context or {},
-                'created_at': datetime.now().isoformat(),
-                'status': 'active',
-                'tasks': [],
-                'files': []
-            }
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Serialize context to JSON if provided
+            context_json = json.dumps(context) if context else None
+            
+            cursor.execute("""
+                INSERT INTO sessions (id, name, context, created_at, status)
+                VALUES (?, ?, ?, ?, ?)
+            """, (session_id, session_name, context_json, datetime.now().isoformat(), 'active'))
+            
+            conn.commit()
+            conn.close()
             
             logger.info(f"Session created: {session_name} ({session_id})")
             
@@ -2674,19 +2706,36 @@ if (window.EventSource) {
             Dictionary with list of sessions
         """
         try:
-            if not hasattr(self, '_sessions'):
-                return {'success': True, 'sessions': []}
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, name, context, created_at, status
+                FROM sessions
+                ORDER BY created_at DESC
+            """)
             
             sessions = []
-            for session_id, session_info in self._sessions.items():
+            for row in cursor.fetchall():
+                session_id, name, context_json, created_at, status = row
+                
+                # Get task count for this session
+                cursor.execute("SELECT COUNT(*) FROM tasks WHERE session_id = ?", (session_id,))
+                task_count = cursor.fetchone()[0]
+                
+                # Deserialize context if present
+                context = json.loads(context_json) if context_json else {}
+                
                 sessions.append({
                     'id': session_id,
-                    'name': session_info['name'],
-                    'status': session_info['status'],
-                    'created_at': session_info['created_at'],
-                    'task_count': len(session_info['tasks']),
-                    'file_count': len(session_info['files'])
+                    'name': name,
+                    'status': status,
+                    'created_at': created_at,
+                    'task_count': task_count,
+                    'file_count': len(context.get('files', [])) if isinstance(context, dict) else 0
                 })
+            
+            conn.close()
             
             return {
                 'success': True,
@@ -2705,26 +2754,42 @@ if (window.EventSource) {
         Args:
             session_id: ID of the session
             task: Task description
-            task_type: Type of task (general, refactoring, testing, etc.)
+            task_type: Type of task (general, refactoring, testing, documentation, bugfix, feature)
             
         Returns:
             Dictionary with task addition result
         """
         try:
-            if not hasattr(self, '_sessions') or session_id not in self._sessions:
+            # Validate task type
+            valid_task_types = ['general', 'refactoring', 'testing', 'documentation', 'bugfix', 'feature']
+            if task_type not in valid_task_types:
+                return {
+                    'success': False,
+                    'error': f'Invalid task type: {task_type}. Valid types: {", ".join(valid_task_types)}'
+                }
+            
+            # Check if session exists
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id FROM sessions WHERE id = ?", (session_id,))
+            if not cursor.fetchone():
+                conn.close()
                 return {'success': False, 'error': f'Session {session_id} not found'}
             
+            # Generate unique task ID
             task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
             
-            self._sessions[session_id]['tasks'].append({
-                'id': task_id,
-                'description': task,
-                'type': task_type,
-                'status': 'pending',
-                'created_at': datetime.now().isoformat()
-            })
+            # Insert task into database
+            cursor.execute("""
+                INSERT INTO tasks (id, session_id, description, type, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (task_id, session_id, task, task_type, 'pending', datetime.now().isoformat()))
             
-            logger.info(f"Task added to session {session_id}: {task}")
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Task added to session {session_id}: {task} (type: {task_type})")
             
             return {
                 'success': True,
@@ -2747,10 +2812,35 @@ if (window.EventSource) {
             Dictionary with list of tasks
         """
         try:
-            if not hasattr(self, '_sessions') or session_id not in self._sessions:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Check if session exists
+            cursor.execute("SELECT id FROM sessions WHERE id = ?", (session_id,))
+            if not cursor.fetchone():
+                conn.close()
                 return {'success': False, 'error': f'Session {session_id} not found'}
             
-            tasks = self._sessions[session_id]['tasks']
+            cursor.execute("""
+                SELECT id, description, type, status, created_at, updated_at
+                FROM tasks
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+            """, (session_id,))
+            
+            tasks = []
+            for row in cursor.fetchall():
+                task_id, description, task_type, status, created_at, updated_at = row
+                tasks.append({
+                    'id': task_id,
+                    'description': description,
+                    'type': task_type,
+                    'status': status,
+                    'created_at': created_at,
+                    'updated_at': updated_at
+                })
+            
+            conn.close()
             
             return {
                 'success': True,
@@ -2776,20 +2866,35 @@ if (window.EventSource) {
             Dictionary with update result
         """
         try:
-            if not hasattr(self, '_sessions') or session_id not in self._sessions:
-                return {'success': False, 'error': f'Session {session_id} not found'}
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
             
-            for task in self._sessions[session_id]['tasks']:
-                if task['id'] == task_id:
-                    task['status'] = status
-                    task['updated_at'] = datetime.now().isoformat()
-                    logger.info(f"Task {task_id} status updated to {status}")
-                    return {
-                        'success': True,
-                        'message': f'Task status updated successfully'
-                    }
+            # Check if task exists
+            cursor.execute("""
+                SELECT id FROM tasks 
+                WHERE session_id = ? AND id = ?
+            """, (session_id, task_id))
             
-            return {'success': False, 'error': f'Task {task_id} not found'}
+            if not cursor.fetchone():
+                conn.close()
+                return {'success': False, 'error': f'Task {task_id} not found in session {session_id}'}
+            
+            # Update task status
+            cursor.execute("""
+                UPDATE tasks
+                SET status = ?, updated_at = ?
+                WHERE session_id = ? AND id = ?
+            """, (status, datetime.now().isoformat(), session_id, task_id))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Task {task_id} status updated to {status}")
+            
+            return {
+                'success': True,
+                'message': f'Task status updated successfully'
+            }
             
         except Exception as e:
             logger.error(f"Error updating task status: {e}")
@@ -2806,10 +2911,20 @@ if (window.EventSource) {
             Dictionary with deletion result
         """
         try:
-            if not hasattr(self, '_sessions') or session_id not in self._sessions:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            # Check if session exists
+            cursor.execute("SELECT id FROM sessions WHERE id = ?", (session_id,))
+            if not cursor.fetchone():
+                conn.close()
                 return {'success': False, 'error': f'Session {session_id} not found'}
             
-            del self._sessions[session_id]
+            # Delete session (tasks will be deleted automatically due to CASCADE)
+            cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            
+            conn.commit()
+            conn.close()
             
             logger.info(f"Session deleted: {session_id}")
             
@@ -2821,6 +2936,116 @@ if (window.EventSource) {
             
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def search_sessions(self, query: str) -> Dict:
+        """
+        Search sessions by name or context.
+        
+        Args:
+            query: Search query string
+            
+        Returns:
+            Dictionary with search results
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            search_pattern = f"%{query}%"
+            
+            cursor.execute("""
+                SELECT id, name, context, created_at, status
+                FROM sessions
+                WHERE name LIKE ? OR context LIKE ?
+                ORDER BY created_at DESC
+            """, (search_pattern, search_pattern))
+            
+            sessions = []
+            for row in cursor.fetchall():
+                session_id, name, context_json, created_at, status = row
+                
+                # Get task count for this session
+                cursor.execute("SELECT COUNT(*) FROM tasks WHERE session_id = ?", (session_id,))
+                task_count = cursor.fetchone()[0]
+                
+                # Deserialize context if present
+                context = json.loads(context_json) if context_json else {}
+                
+                sessions.append({
+                    'id': session_id,
+                    'name': name,
+                    'status': status,
+                    'created_at': created_at,
+                    'task_count': task_count,
+                    'file_count': len(context.get('files', [])) if isinstance(context, dict) else 0
+                })
+            
+            conn.close()
+            
+            return {
+                'success': True,
+                'sessions': sessions,
+                'count': len(sessions),
+                'query': query
+            }
+            
+        except Exception as e:
+            logger.error(f"Error searching sessions: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def filter_sessions_by_status(self, status: str) -> Dict:
+        """
+        Filter sessions by status.
+        
+        Args:
+            status: Status to filter by (active, archived, etc.)
+            
+        Returns:
+            Dictionary with filtered sessions
+        """
+        try:
+            conn = sqlite3.connect(str(self.index_db_path))
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, name, context, created_at, status
+                FROM sessions
+                WHERE status = ?
+                ORDER BY created_at DESC
+            """, (status,))
+            
+            sessions = []
+            for row in cursor.fetchall():
+                session_id, name, context_json, created_at, session_status = row
+                
+                # Get task count for this session
+                cursor.execute("SELECT COUNT(*) FROM tasks WHERE session_id = ?", (session_id,))
+                task_count = cursor.fetchone()[0]
+                
+                # Deserialize context if present
+                context = json.loads(context_json) if context_json else {}
+                
+                sessions.append({
+                    'id': session_id,
+                    'name': name,
+                    'status': session_status,
+                    'created_at': created_at,
+                    'task_count': task_count,
+                    'file_count': len(context.get('files', [])) if isinstance(context, dict) else 0
+                })
+            
+            conn.close()
+            
+            return {
+                'success': True,
+                'sessions': sessions,
+                'count': len(sessions),
+                'filter': f'status={status}'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error filtering sessions: {e}")
             return {'success': False, 'error': str(e)}
 
     def get_symbol_hierarchy(self, file_path: str) -> Dict:
