@@ -3551,6 +3551,7 @@ The infrastructure is ready for LLM integration.
             Dictionary with application result
         """
         try:
+            import re
             file_path_obj = Path(file_path)
             
             if not file_path_obj.exists():
@@ -3560,27 +3561,57 @@ The infrastructure is ready for LLM integration.
             with open(file_path_obj, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             
-            # Parse and apply diff hunk
-            # This is a simplified implementation
-            # A full implementation would use a proper diff parser
-            applied_lines = []
-            skip_next = False
+            # Parse diff hunk
+            # Format: @@ -old_start,old_count +new_start,new_count @@
+            hunk_match = re.search(r'^@@ -(\d+),?(\d+)? \+(\d+),?(\d+)? @@', diff_hunk, re.MULTILINE)
+            if not hunk_match:
+                return {'success': False, 'error': 'Invalid diff hunk format'}
             
-            for line in lines:
-                if skip_next:
-                    skip_next = False
-                    continue
-                # Simple matching logic (would need proper diff parsing in production)
-                applied_lines.append(line)
+            old_start = int(hunk_match.group(1)) - 1  # Convert to 0-indexed
+            old_count = int(hunk_match.group(2)) if hunk_match.group(2) else 1
+            new_start = int(hunk_match.group(3)) - 1  # Convert to 0-indexed
+            new_count = int(hunk_match.group(4)) if hunk_match.group(4) else 1
+            
+            # Extract diff lines
+            diff_lines = diff_hunk.split('\n')
+            diff_lines = [line for line in diff_lines if line.startswith((' ', '+', '-')) and not line.startswith('@@')]
+            
+            # Apply changes
+            new_lines = lines[:old_start]
+            old_line_idx = old_start
+            diff_idx = 0
+            
+            while diff_idx < len(diff_lines) and old_line_idx < len(lines):
+                diff_line = diff_lines[diff_idx]
+                
+                if diff_line.startswith(' '):
+                    # Context line - must match
+                    if old_line_idx < len(lines) and lines[old_line_idx].rstrip('\n') == diff_line[1:]:
+                        new_lines.append(lines[old_line_idx])
+                        old_line_idx += 1
+                    diff_idx += 1
+                elif diff_line.startswith('-'):
+                    # Remove line
+                    old_line_idx += 1
+                    diff_idx += 1
+                elif diff_line.startswith('+'):
+                    # Add line
+                    new_lines.append(diff_line[1:] + '\n')
+                    diff_idx += 1
+                else:
+                    diff_idx += 1
+            
+            # Add remaining lines
+            new_lines.extend(lines[old_line_idx:])
             
             # Write back
             with open(file_path_obj, 'w', encoding='utf-8') as f:
-                f.writelines(applied_lines)
+                f.writelines(new_lines)
             
             return {
                 'success': True,
                 'file_path': str(file_path_obj),
-                'lines_changed': len(applied_lines) - len(lines)
+                'lines_changed': len(new_lines) - len(lines)
             }
             
         except Exception as e:
