@@ -2066,21 +2066,51 @@ class IndexManager:
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
                     if node.lineno > current_line:
+                        # Calculate confidence based on proximity
+                        distance = node.lineno - current_line
+                        confidence = max(0.5, 0.9 - (distance * 0.05))
                         predictions.append({
                             'type': 'function',
                             'name': node.name,
                             'line': node.lineno,
                             'col': 1,
-                            'confidence': 0.8
+                            'confidence': confidence
                         })
                 elif isinstance(node, ast.ClassDef):
                     if node.lineno > current_line:
+                        # Calculate confidence based on proximity
+                        distance = node.lineno - current_line
+                        confidence = max(0.4, 0.8 - (distance * 0.05))
                         predictions.append({
                             'type': 'class',
                             'name': node.name,
                             'line': node.lineno,
                             'col': 1,
-                            'confidence': 0.7
+                            'confidence': confidence
+                        })
+                elif isinstance(node, ast.AsyncFunctionDef):
+                    if node.lineno > current_line:
+                        # Calculate confidence based on proximity
+                        distance = node.lineno - current_line
+                        confidence = max(0.5, 0.9 - (distance * 0.05))
+                        predictions.append({
+                            'type': 'async_function',
+                            'name': node.name,
+                            'line': node.lineno,
+                            'col': 1,
+                            'confidence': confidence
+                        })
+            
+            # Also predict import statements and decorators
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    if node.lineno > current_line:
+                        predictions.append({
+                            'type': 'import',
+                            'name': 'import',
+                            'line': node.lineno,
+                            'col': 1,
+                            'confidence': 0.6
                         })
             
             # Sort by line number and confidence
@@ -2090,7 +2120,7 @@ class IndexManager:
             if predictions:
                 return {
                     'success': True,
-                    'predictions': predictions[:3],
+                    'predictions': predictions[:5],
                     'top_prediction': predictions[0] if predictions else None
                 }
             else:
@@ -2124,24 +2154,67 @@ class IndexManager:
             if context is None:
                 context = {}
             
-            # Simple command mapping (can be enhanced with LLM)
+            # Enhanced command mapping with more patterns
             command_mappings = {
                 'run tests': ['python', '-m', 'pytest'],
+                'run test': ['python', '-m', 'pytest'],
+                'test': ['python', '-m', 'pytest'],
                 'run lint': ['python', '-m', 'flake8'],
+                'run linter': ['python', '-m', 'flake8'],
+                'lint': ['python', '-m', 'flake8'],
                 'run format': ['python', '-m', 'black', '.'],
+                'format code': ['python', '-m', 'black', '.'],
+                'format': ['python', '-m', 'black', '.'],
                 'install dependencies': ['pip', 'install', '-r', 'requirements.txt'],
+                'install deps': ['pip', 'install', '-r', 'requirements.txt'],
+                'install': ['pip', 'install', '-r', 'requirements.txt'],
                 'create virtual environment': ['python', '-m', 'venv', 'venv'],
+                'create venv': ['python', '-m', 'venv', 'venv'],
                 'activate virtual environment': ['source', 'venv/bin/activate'],
+                'activate venv': ['source', 'venv/bin/activate'],
                 'build': ['python', 'setup.py', 'build'],
                 'clean': ['rm', '-rf', 'build/', 'dist/', '*.pyc'],
+                'clear cache': ['rm', '-rf', '__pycache__', '*.pyc'],
+                'git status': ['git', 'status'],
+                'git commit': ['git', 'commit'],
+                'git push': ['git', 'push'],
+                'git pull': ['git', 'pull'],
+                'git add': ['git', 'add'],
+                'start server': ['python', '-m', 'http.server', '8000'],
+                'serve': ['python', '-m', 'http.server', '8000'],
+                'list files': ['ls', '-la'],
+                'show files': ['ls', '-la'],
+                'current directory': ['pwd'],
+                'where am i': ['pwd'],
+                'python version': ['python', '--version'],
+                'pip list': ['pip', 'list'],
+                'check dependencies': ['pip', 'list'],
             }
             
-            # Try to match command
+            # Try to match command with partial matching
             matched_cmd = None
+            best_match = None
+            best_match_score = 0
+            
             for key, cmd in command_mappings.items():
-                if key.lower() in command.lower():
+                # Check for exact match
+                if key.lower() == command.lower():
                     matched_cmd = cmd
                     break
+                
+                # Check for partial match (command contains key)
+                if key.lower() in command.lower() or command.lower() in key.lower():
+                    # Calculate match score based on overlap
+                    overlap = len(set(key.lower()) & set(command.lower()))
+                    score = overlap / max(len(key), len(command))
+                    if score > best_match_score:
+                        best_match_score = score
+                        best_match = cmd
+            
+            if matched_cmd:
+                pass  # Use exact match
+            elif best_match and best_match_score > 0.3:
+                matched_cmd = best_match  # Use best partial match
             
             if matched_cmd:
                 # Execute the command
@@ -2182,7 +2255,7 @@ class IndexManager:
                 except Exception as e:
                     return {
                         'success': False,
-                        'error': f'Command not recognized: {command}. Try: run tests, run lint, run format'
+                        'error': f'Command not recognized: {command}. Try: run tests, run lint, run format, git status, pip list'
                     }
             
         except subprocess.TimeoutExpired:
@@ -2332,6 +2405,20 @@ class IndexManager:
             Dictionary with registration result
         """
         try:
+            # Validate tool configuration
+            if not tool_config.get('endpoint'):
+                return {'success': False, 'error': 'Tool configuration must include endpoint'}
+            
+            # Validate endpoint format
+            endpoint = tool_config['endpoint']
+            if not endpoint.startswith(('http://', 'https://')):
+                return {'success': False, 'error': 'Endpoint must start with http:// or https://'}
+            
+            # Validate method if provided
+            method = tool_config.get('method', 'POST')
+            if method.upper() not in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
+                return {'success': False, 'error': f'Invalid method: {method}'}
+            
             # Store tool configuration
             if not hasattr(self, '_mcp_tools'):
                 self._mcp_tools = {}
@@ -2340,7 +2427,8 @@ class IndexManager:
                 'name': tool_name,
                 'config': tool_config,
                 'registered_at': datetime.now().isoformat(),
-                'status': 'active'
+                'status': 'active',
+                'validated': True
             }
             
             logger.info(f"MCP tool registered: {tool_name}")
