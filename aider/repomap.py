@@ -11,6 +11,7 @@ Key Features:
 - File dependency tracking
 - Token-efficient context representation
 - Cached map generation
+- Rust-accelerated parsing (when available)
 """
 
 import colorsys
@@ -42,6 +43,19 @@ warnings.simplefilter("ignore", category=FutureWarning)
 from grep_ast.tsl import USING_TSL_PACK, get_language, get_parser  # noqa: E402
 
 Tag = namedtuple("Tag", "rel_fname fname line name kind".split())
+
+# Try to import Rust-accelerated module
+RUST_AVAILABLE = False
+RUST_IMPL = None
+try:
+    from repomap_rust import repomap_rust
+    RUST_AVAILABLE = True
+    RUST_IMPL = repomap_rust
+    if RUST_AVAILABLE:
+        print("Rust-accelerated repomap module loaded")
+except ImportError:
+    RUST_AVAILABLE = False
+    RUST_IMPL = None
 
 
 SQLITE_ERRORS = (sqlite3.OperationalError, sqlite3.DatabaseError, OSError)
@@ -237,7 +251,12 @@ class RepoMap:
             self.tags_cache_error(e)
 
     def save_tags_cache(self):
-        pass
+        """Save tags cache to disk if cache is enabled."""
+        if self.TAGS_CACHE is not None:
+            try:
+                self.TAGS_CACHE.close()
+            except Exception as e:
+                self.tags_cache_error(e)
 
     def get_mtime(self, fname):
         try:
@@ -265,8 +284,27 @@ class RepoMap:
                 self.tags_cache_error(e)
                 return self.TAGS_CACHE[cache_key]["data"]
 
-        # miss!
-        data = list(self.get_tags_raw(fname, rel_fname))
+        # miss! - Use Rust implementation if available
+        if RUST_AVAILABLE and RUST_IMPL:
+            try:
+                rust_tags = RUST_IMPL.get_tags_rust(fname, rel_fname)
+                # Convert Rust Tag objects to Python namedtuples
+                data = [
+                    Tag(
+                        rel_fname=t.rel_fname,
+                        fname=t.fname,
+                        name=t.name,
+                        kind=t.kind,
+                        line=t.line
+                    )
+                    for t in rust_tags
+                ]
+            except Exception as e:
+                if self.verbose:
+                    self.io.tool_warning(f"Rust parsing failed, falling back to Python: {e}")
+                data = list(self.get_tags_raw(fname, rel_fname))
+        else:
+            data = list(self.get_tags_raw(fname, rel_fname))
 
         # Update the cache
         try:
@@ -537,7 +575,31 @@ class RepoMap:
             pers_args = dict()
 
         try:
-            ranked = nx.pagerank(G, weight="weight", **pers_args)
+            # Use Rust PageRank if available
+            if RUST_AVAILABLE and RUST_IMPL:
+                try:
+                    # Convert graph to Rust format
+                    nodes = list(G.nodes())
+                    edges = [
+                        (src, dst, data.get("weight", 1.0))
+                        for src, dst, data in G.edges(data=True)
+                    ]
+                    
+                    rust_ranked = RUST_IMPL.pagerank_rust(
+                        nodes,
+                        edges,
+                        personalization,
+                        0.85,  # damping factor
+                        100,   # max iterations
+                        1e-6,  # tolerance
+                    )
+                    ranked = rust_ranked
+                except Exception as e:
+                    if self.verbose:
+                        self.io.tool_warning(f"Rust PageRank failed, falling back to Python: {e}")
+                    ranked = nx.pagerank(G, weight="weight", **pers_args)
+            else:
+                ranked = nx.pagerank(G, weight="weight", **pers_args)
         except ZeroDivisionError:
             # Issue #1536
             try:
