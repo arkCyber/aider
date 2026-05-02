@@ -4791,6 +4791,181 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
+    def cmd_session(self, args):
+        """
+        Manage sessions for task tracking (Agent Command Center).
+        
+        This command implements a simplified version of Windsurf's Agent Command Center.
+        
+        Args:
+            args: Session command and parameters
+                  Usage: /session <action> [parameters]
+                  Actions:
+                    - create <name>
+                    - list
+                    - tasks <session_id>
+                    - add-task <session_id> <task> [type]
+                    - update-task <session_id> <task_id> <status>
+                    - delete <session_id>
+            
+        Examples:
+            /session create my-session
+            /session list
+            /session tasks session_20240502_120000
+            /session add-task session_20240502_120000 "Refactor code" refactoring
+            /session delete session_20240502_120000
+        """
+        self.log_command_start("cmd_session", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_session", "error", "Index manager not available")
+                return
+            
+            if not args or not args.strip():
+                self.io.tool_error("Usage: /session <action> [parameters]")
+                self.io.tool_error("Actions: create, list, tasks, add-task, update-task, delete")
+                self.log_command_end("cmd_session", "error", "No action specified")
+                return
+            
+            parts = args.strip().split(maxsplit=1)
+            action = parts[0]
+            
+            if action == 'create':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /session create <name>", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing session name")
+                    return
+                
+                session_name = parts[1]
+                result = self.coder.index_manager.create_session(session_name)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Session created successfully!", log_only=False)
+                    self.io.tool_output(f"  Name: {session_name}", log_only=False)
+                    self.io.tool_output(f"  ID: {result['session_id']}", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Creation failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_session", "success" if result['success'] else "error")
+            
+            elif action == 'list':
+                result = self.coder.index_manager.list_sessions()
+                if result['success']:
+                    self.io.tool_output(f"\n📋 Sessions ({result['count']}):", log_only=False)
+                    for session in result['sessions']:
+                        self.io.tool_output(f"  • {session['name']}", log_only=False)
+                        self.io.tool_output(f"    ID: {session['id']}", log_only=False)
+                        self.io.tool_output(f"    Status: {session['status']}", log_only=False)
+                        self.io.tool_output(f"    Tasks: {session['task_count']}", log_only=False)
+                        self.io.tool_output(f"    Files: {session['file_count']}", log_only=False)
+                        self.io.tool_output(f"    Created: {session['created_at']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Error: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_session", "success" if result['success'] else "error")
+            
+            elif action == 'tasks':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /session tasks <session_id>", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing session ID")
+                    return
+                
+                session_id = parts[1]
+                result = self.coder.index_manager.get_session_tasks(session_id)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n📝 Tasks for {session_id} ({result['count']}):", log_only=False)
+                    for task in result['tasks']:
+                        self.io.tool_output(f"  • {task['description']}", log_only=False)
+                        self.io.tool_output(f"    ID: {task['id']}", log_only=False)
+                        self.io.tool_output(f"    Type: {task['type']}", log_only=False)
+                        self.io.tool_output(f"    Status: {task['status']}", log_only=False)
+                        self.io.tool_output(f"    Created: {task['created_at']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Error: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_session", "success" if result['success'] else "error")
+            
+            elif action == 'add-task':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /session add-task <session_id> <task> [type]", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing parameters")
+                    return
+                
+                task_parts = parts[1].split(maxsplit=2)
+                session_id = task_parts[0]
+                task_desc = task_parts[1] if len(task_parts) > 1 else None
+                task_type = task_parts[2] if len(task_parts) > 2 else 'general'
+                
+                if not task_desc:
+                    self.io.tool_error("Task description is required", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing task description")
+                    return
+                
+                result = self.coder.index_manager.add_task_to_session(session_id, task_desc, task_type)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Task added successfully!", log_only=False)
+                    self.io.tool_output(f"  Task ID: {result['task_id']}", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Task addition failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_session", "success" if result['success'] else "error")
+            
+            elif action == 'update-task':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /session update-task <session_id> <task_id> <status>", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing parameters")
+                    return
+                
+                update_parts = parts[1].split(maxsplit=2)
+                if len(update_parts) < 3:
+                    self.io.tool_error("Usage: /session update-task <session_id> <task_id> <status>", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing parameters")
+                    return
+                
+                session_id = update_parts[0]
+                task_id = update_parts[1]
+                status = update_parts[2]
+                
+                result = self.coder.index_manager.update_task_status(session_id, task_id, status)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Task status updated successfully!", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Update failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_session", "success" if result['success'] else "error")
+            
+            elif action == 'delete':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /session delete <session_id>", log_only=False)
+                    self.log_command_end("cmd_session", "error", "Missing session ID")
+                    return
+                
+                session_id = parts[1]
+                result = self.coder.index_manager.delete_session(session_id)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Session deleted successfully!", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Deletion failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_session", "success" if result['success'] else "error")
+            
+            else:
+                self.io.tool_error(f"Unknown action: {action}", log_only=False)
+                self.io.tool_error("Actions: create, list, tasks, add-task, update-task, delete", log_only=False)
+                self.log_command_end("cmd_session", "error", f"Unknown action: {action}")
+        
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}", log_only=False)
+            self.log_command_end("cmd_session", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_env(self, args):
         "Manage virtual environments"
         import subprocess

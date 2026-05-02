@@ -2623,6 +2623,205 @@ if (window.EventSource) {
             logger.error(f"Error unregistering MCP tool: {e}")
             return {'success': False, 'error': str(e)}
 
+    def create_session(self, session_name: str, context: Dict = None) -> Dict:
+        """
+        Create a new session for task management.
+        
+        This implements a simplified version of Windsurf's Agent Command Center for session management.
+        
+        Args:
+            session_name: Name of the session
+            context: Optional context (files, tasks, etc.)
+            
+        Returns:
+            Dictionary with session creation result
+        """
+        try:
+            if not hasattr(self, '_sessions'):
+                self._sessions = {}
+            
+            session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            self._sessions[session_id] = {
+                'id': session_id,
+                'name': session_name,
+                'context': context or {},
+                'created_at': datetime.now().isoformat(),
+                'status': 'active',
+                'tasks': [],
+                'files': []
+            }
+            
+            logger.info(f"Session created: {session_name} ({session_id})")
+            
+            return {
+                'success': True,
+                'session_id': session_id,
+                'session_name': session_name,
+                'message': f'Session {session_name} created successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating session: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def list_sessions(self) -> Dict:
+        """
+        List all sessions.
+        
+        Returns:
+            Dictionary with list of sessions
+        """
+        try:
+            if not hasattr(self, '_sessions'):
+                return {'success': True, 'sessions': []}
+            
+            sessions = []
+            for session_id, session_info in self._sessions.items():
+                sessions.append({
+                    'id': session_id,
+                    'name': session_info['name'],
+                    'status': session_info['status'],
+                    'created_at': session_info['created_at'],
+                    'task_count': len(session_info['tasks']),
+                    'file_count': len(session_info['files'])
+                })
+            
+            return {
+                'success': True,
+                'sessions': sessions,
+                'count': len(sessions)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error listing sessions: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def add_task_to_session(self, session_id: str, task: str, task_type: str = 'general') -> Dict:
+        """
+        Add a task to a session.
+        
+        Args:
+            session_id: ID of the session
+            task: Task description
+            task_type: Type of task (general, refactoring, testing, etc.)
+            
+        Returns:
+            Dictionary with task addition result
+        """
+        try:
+            if not hasattr(self, '_sessions') or session_id not in self._sessions:
+                return {'success': False, 'error': f'Session {session_id} not found'}
+            
+            task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+            
+            self._sessions[session_id]['tasks'].append({
+                'id': task_id,
+                'description': task,
+                'type': task_type,
+                'status': 'pending',
+                'created_at': datetime.now().isoformat()
+            })
+            
+            logger.info(f"Task added to session {session_id}: {task}")
+            
+            return {
+                'success': True,
+                'task_id': task_id,
+                'message': f'Task added successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error adding task to session: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def get_session_tasks(self, session_id: str) -> Dict:
+        """
+        Get all tasks for a session.
+        
+        Args:
+            session_id: ID of the session
+            
+        Returns:
+            Dictionary with list of tasks
+        """
+        try:
+            if not hasattr(self, '_sessions') or session_id not in self._sessions:
+                return {'success': False, 'error': f'Session {session_id} not found'}
+            
+            tasks = self._sessions[session_id]['tasks']
+            
+            return {
+                'success': True,
+                'session_id': session_id,
+                'tasks': tasks,
+                'count': len(tasks)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting session tasks: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def update_task_status(self, session_id: str, task_id: str, status: str) -> Dict:
+        """
+        Update the status of a task.
+        
+        Args:
+            session_id: ID of the session
+            task_id: ID of the task
+            status: New status (pending, in_progress, completed, failed)
+            
+        Returns:
+            Dictionary with update result
+        """
+        try:
+            if not hasattr(self, '_sessions') or session_id not in self._sessions:
+                return {'success': False, 'error': f'Session {session_id} not found'}
+            
+            for task in self._sessions[session_id]['tasks']:
+                if task['id'] == task_id:
+                    task['status'] = status
+                    task['updated_at'] = datetime.now().isoformat()
+                    logger.info(f"Task {task_id} status updated to {status}")
+                    return {
+                        'success': True,
+                        'message': f'Task status updated successfully'
+                    }
+            
+            return {'success': False, 'error': f'Task {task_id} not found'}
+            
+        except Exception as e:
+            logger.error(f"Error updating task status: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def delete_session(self, session_id: str) -> Dict:
+        """
+        Delete a session.
+        
+        Args:
+            session_id: ID of the session to delete
+            
+        Returns:
+            Dictionary with deletion result
+        """
+        try:
+            if not hasattr(self, '_sessions') or session_id not in self._sessions:
+                return {'success': False, 'error': f'Session {session_id} not found'}
+            
+            del self._sessions[session_id]
+            
+            logger.info(f"Session deleted: {session_id}")
+            
+            return {
+                'success': True,
+                'session_id': session_id,
+                'message': f'Session deleted successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error deleting session: {e}")
+            return {'success': False, 'error': str(e)}
+
     def get_symbol_hierarchy(self, file_path: str) -> Dict:
         """
         Get the symbol hierarchy for a file.
