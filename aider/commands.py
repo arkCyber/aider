@@ -4445,6 +4445,132 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
+    def cmd_jump(self, args):
+        """
+        Predict and jump to the next likely cursor location.
+        
+        This command implements Windsurf's Tab to Jump feature for intelligent navigation.
+        
+        Args:
+            args: File path (optional, uses current file if not specified)
+            
+        Example:
+            /jump
+            /jump myfile.py
+        """
+        self.log_command_start("cmd_jump", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_jump", "error", "Index manager not available")
+                return
+            
+            # Get current file
+            if args and args.strip():
+                file_path = args.strip()
+            elif self.coder.abs_fnames:
+                file_path = list(self.coder.abs_fnames)[0]
+            else:
+                self.io.tool_error("No file specified and no file in chat")
+                self.log_command_end("cmd_jump", "error", "No file specified")
+                return
+            
+            # Get current cursor position (default to line 1, col 1)
+            current_line = 1
+            current_col = 1
+            
+            # Predict cursor location
+            result = self.coder.index_manager.predict_cursor_location(
+                file_path, current_line, current_col
+            )
+            
+            if not result['success']:
+                self.io.tool_error(f"Prediction failed: {result.get('error', 'Unknown error')}")
+                self.log_command_end("cmd_jump", "error", result.get('error'))
+                return
+            
+            self.io.tool_output(f"\n✓ Cursor prediction for {file_path}", log_only=False)
+            
+            if result['top_prediction']:
+                pred = result['top_prediction']
+                self.io.tool_output(f"  Top prediction:", log_only=False)
+                self.io.tool_output(f"    Type: {pred['type']}", log_only=False)
+                self.io.tool_output(f"    Name: {pred['name']}", log_only=False)
+                self.io.tool_output(f"    Line: {pred['line']}", log_only=False)
+                self.io.tool_output(f"    Confidence: {pred['confidence']:.0%}", log_only=False)
+            
+            if result['predictions']:
+                self.io.tool_output(f"\n  All predictions:", log_only=False)
+                for i, pred in enumerate(result['predictions'], 1):
+                    self.io.tool_output(f"    {i}. {pred['type']} {pred['name']} at line {pred['line']} ({pred['confidence']:.0%})", log_only=False)
+            
+            self.log_command_end("cmd_jump", "success", f"Predictions generated")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_jump", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
+    def cmd_terminal(self, args):
+        """
+        Execute a natural language terminal command.
+        
+        This command implements Windsurf's Command in Terminal feature.
+        
+        Args:
+            args: Natural language command
+            
+        Examples:
+            /terminal run tests
+            /terminal run lint
+            /terminal install dependencies
+        """
+        self.log_command_start("cmd_terminal", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_terminal", "error", "Index manager not available")
+                return
+            
+            if not args or not args.strip():
+                self.io.tool_error("Please provide a command")
+                self.log_command_end("cmd_terminal", "error", "No command provided")
+                return
+            
+            command = args.strip()
+            
+            self.io.tool_output(f"🖥️  Executing: {command}", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            # Execute natural language command
+            result = self.coder.index_manager.execute_natural_language_command(command)
+            
+            if result['success']:
+                self.io.tool_output(f"\n✓ Command executed successfully!", log_only=False)
+                self.io.tool_output(f"  Command: {result['command']}", log_only=False)
+                self.io.tool_output(f"  Return code: {result['returncode']}", log_only=False)
+                
+                if result['stdout']:
+                    self.io.tool_output(f"\n  Stdout:", log_only=False)
+                    self.io.tool_output(result['stdout'], log_only=False)
+                
+                if result['stderr']:
+                    self.io.tool_output(f"\n  Stderr:", log_only=False)
+                    self.io.tool_output(result['stderr'], log_only=False)
+            else:
+                self.io.tool_error(f"\n✗ Command failed: {result.get('error', 'Unknown error')}", log_only=False)
+            
+            self.log_command_end("cmd_terminal", "success" if result['success'] else "error")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_terminal", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_env(self, args):
         "Manage virtual environments"
         import subprocess

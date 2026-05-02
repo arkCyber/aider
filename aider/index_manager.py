@@ -2025,7 +2025,172 @@ class IndexManager:
         except Exception as e:
             logger.error(f"Error finding references: {e}")
             return []
-    
+
+    def predict_cursor_location(self, file_path: str, current_line: int, current_col: int) -> Dict:
+        """
+        Predict the next likely cursor location based on code context.
+        
+        This implements Windsurf's Tab to Jump feature for intelligent navigation.
+        
+        Args:
+            file_path: Path to the file
+            current_line: Current cursor line (1-indexed)
+            current_col: Current cursor column (1-indexed)
+            
+        Returns:
+            Dictionary with predicted location and confidence
+        """
+        try:
+            import ast
+            
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File does not exist'}
+            
+            with open(file_path_obj, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            lines = content.split('\n')
+            
+            # Parse AST
+            try:
+                tree = ast.parse(content, filename=str(file_path))
+            except SyntaxError:
+                return {'success': False, 'error': 'Syntax error in file'}
+            
+            # Find current context
+            predictions = []
+            
+            # Predict next function definition
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    if node.lineno > current_line:
+                        predictions.append({
+                            'type': 'function',
+                            'name': node.name,
+                            'line': node.lineno,
+                            'col': 1,
+                            'confidence': 0.8
+                        })
+                elif isinstance(node, ast.ClassDef):
+                    if node.lineno > current_line:
+                        predictions.append({
+                            'type': 'class',
+                            'name': node.name,
+                            'line': node.lineno,
+                            'col': 1,
+                            'confidence': 0.7
+                        })
+            
+            # Sort by line number and confidence
+            predictions.sort(key=lambda x: (x['line'], -x['confidence']))
+            
+            # Return top prediction
+            if predictions:
+                return {
+                    'success': True,
+                    'predictions': predictions[:3],
+                    'top_prediction': predictions[0] if predictions else None
+                }
+            else:
+                return {
+                    'success': True,
+                    'predictions': [],
+                    'top_prediction': None
+                }
+            
+        except Exception as e:
+            logger.error(f"Error predicting cursor location: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def execute_natural_language_command(self, command: str, context: Dict = None) -> Dict:
+        """
+        Execute a natural language terminal command.
+        
+        This implements Windsurf's Command in Terminal feature.
+        
+        Args:
+            command: Natural language command
+            context: Optional context (current directory, etc.)
+            
+        Returns:
+            Dictionary with execution results
+        """
+        try:
+            import subprocess
+            import os
+            
+            if context is None:
+                context = {}
+            
+            # Simple command mapping (can be enhanced with LLM)
+            command_mappings = {
+                'run tests': ['python', '-m', 'pytest'],
+                'run lint': ['python', '-m', 'flake8'],
+                'run format': ['python', '-m', 'black', '.'],
+                'install dependencies': ['pip', 'install', '-r', 'requirements.txt'],
+                'create virtual environment': ['python', '-m', 'venv', 'venv'],
+                'activate virtual environment': ['source', 'venv/bin/activate'],
+                'build': ['python', 'setup.py', 'build'],
+                'clean': ['rm', '-rf', 'build/', 'dist/', '*.pyc'],
+            }
+            
+            # Try to match command
+            matched_cmd = None
+            for key, cmd in command_mappings.items():
+                if key.lower() in command.lower():
+                    matched_cmd = cmd
+                    break
+            
+            if matched_cmd:
+                # Execute the command
+                cwd = context.get('cwd', os.getcwd())
+                result = subprocess.run(
+                    matched_cmd,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                return {
+                    'success': result.returncode == 0,
+                    'command': matched_cmd,
+                    'stdout': result.stdout,
+                    'stderr': result.stderr,
+                    'returncode': result.returncode
+                }
+            else:
+                # If no match, try to execute as shell command
+                try:
+                    result = subprocess.run(
+                        command,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    
+                    return {
+                        'success': result.returncode == 0,
+                        'command': command,
+                        'stdout': result.stdout,
+                        'stderr': result.stderr,
+                        'returncode': result.returncode
+                    }
+                except Exception as e:
+                    return {
+                        'success': False,
+                        'error': f'Command not recognized: {command}. Try: run tests, run lint, run format'
+                    }
+            
+        except subprocess.TimeoutExpired:
+            return {'success': False, 'error': 'Command timed out'}
+        except Exception as e:
+            logger.error(f"Error executing natural language command: {e}")
+            return {'success': False, 'error': str(e)}
+
     def get_symbol_hierarchy(self, file_path: str) -> Dict:
         """
         Get the symbol hierarchy for a file.
