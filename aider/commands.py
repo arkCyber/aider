@@ -4068,6 +4068,216 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
+    def cmd_template(self, args):
+        """
+        Create a new project from a template.
+        
+        This command provides project scaffolding capabilities similar to Cursor,
+        allowing users to quickly create new projects with standardized structure.
+        
+        Subcommands:
+            - create <template_name> <project_name> [output_dir]: Create project from template
+            - list: List available templates
+            
+        Args:
+            args: Template command in format "<command> [args]"
+            
+        Examples:
+            /template create python-basic my-app
+            /template create python-web-flask my-api /path/to/output
+            /template list
+        """
+        self.log_command_start("cmd_template", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_template", "error", "Index manager not available")
+                return
+            
+            parts = args.strip().split()
+            if not parts:
+                self.io.tool_error("Usage: /template <command> [args]")
+                self.log_command_end("cmd_template", "error", "No command specified")
+                return
+            
+            command = parts[0].lower()
+            
+            if command == 'list':
+                self.io.tool_output("\n📋 Available Templates:", log_only=False)
+                templates = ['python-basic', 'python-web-flask', 'javascript-basic']
+                for template in templates:
+                    self.io.tool_output(f"  • {template}", log_only=False)
+                self.io.tool_output("\nUsage: /template create <template_name> <project_name>", log_only=False)
+            
+            elif command == 'create':
+                if len(parts) < 3:
+                    self.io.tool_error("Usage: /template create <template_name> <project_name> [output_dir]")
+                    self.log_command_end("cmd_template", "error", "Missing arguments")
+                    return
+                
+                template_name = parts[1]
+                project_name = parts[2]
+                output_dir = parts[3] if len(parts) > 3 else None
+                
+                results = self.coder.index_manager.create_project_from_template(
+                    template_name, project_name, output_dir
+                )
+                
+                if not results['success']:
+                    self.io.tool_error(f"Failed to create project: {results.get('error', 'Unknown error')}")
+                    self.log_command_end("cmd_template", "error", results.get('error'))
+                    return
+                
+                self.io.tool_output(f"\n✓ Project created successfully!", log_only=False)
+                self.io.tool_output(f"  Project: {results['project_name']}", log_only=False)
+                self.io.tool_output(f"  Path: {results['project_path']}", log_only=False)
+                self.io.tool_output(f"  Template: {results['template']}", log_only=False)
+                if 'files_created' in results:
+                    self.io.tool_output(f"  Files created: {results['files_created']}", log_only=False)
+                self.io.tool_output(f"\n💡 Next steps:", log_only=False)
+                self.io.tool_output(f"  cd {results['project_name']}", log_only=False)
+                self.io.tool_output(f"  # Start working on your project!", log_only=False)
+            
+            else:
+                self.io.tool_error(f"Unknown command: {command}")
+                self.io.tool_output("Available commands: create, list", log_only=False)
+                self.log_command_end("cmd_template", "error", f"Unknown command: {command}")
+                return
+            
+            self.log_command_end("cmd_template", "success", f"Command {command} completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_template", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+    
+    def cmd_format(self, args):
+        """
+        Format code using external formatting tools.
+        
+        This command integrates with popular code formatters like black, prettier,
+        and autopep8 to automatically format code according to style guidelines.
+        
+        Args:
+            args: Format command in format "<file_path> [formatter]"
+            
+        Examples:
+            /format main.py
+            /format main.py black
+            /format script.js prettier
+        """
+        self.log_command_start("cmd_format", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_format", "error", "Index manager not available")
+                return
+            
+            parts = args.strip().split()
+            if len(parts) < 1:
+                self.io.tool_error("Usage: /format <file_path> [formatter]")
+                self.log_command_end("cmd_format", "error", "Missing file path")
+                return
+            
+            file_path = parts[0]
+            formatter = parts[1] if len(parts) > 1 else 'auto'
+            
+            results = self.coder.index_manager.format_code(file_path, formatter)
+            
+            if not results['success']:
+                self.io.tool_error(f"Formatting failed: {results.get('error', 'Unknown error')}")
+                self.log_command_end("cmd_format", "error", results.get('error'))
+                return
+            
+            self.io.tool_output(f"\n✓ Code formatted successfully!", log_only=False)
+            self.io.tool_output(f"  File: {results['file_path']}", log_only=False)
+            self.io.tool_output(f"  Formatter: {results['formatter']}", log_only=False)
+            self.io.tool_output(f"  Changed: {results.get('changed', False)}", log_only=False)
+            
+            if 'output' in results and results['output']:
+                self.io.tool_output(f"\n  Output:", log_only=False)
+                self.io.tool_output(results['output'], log_only=False)
+            
+            self.log_command_end("cmd_format", "success", "Formatting completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_format", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+    
+    def cmd_lint(self, args):
+        """
+        Run linter on a file.
+        
+        This command integrates with popular linting tools like pylint, flake8,
+        and eslint to check code quality and identify potential issues.
+        
+        Args:
+            args: Lint command in format "<file_path> [linter]"
+            
+        Examples:
+            /lint main.py
+            /lint main.py flake8
+            /lint script.js eslint
+        """
+        self.log_command_start("cmd_lint", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_lint", "error", "Index manager not available")
+                return
+            
+            parts = args.strip().split()
+            if len(parts) < 1:
+                self.io.tool_error("Usage: /lint <file_path> [linter]")
+                self.log_command_end("cmd_lint", "error", "Missing file path")
+                return
+            
+            file_path = parts[0]
+            linter = parts[1] if len(parts) > 1 else 'auto'
+            
+            self.io.tool_output(f"🔍 Running {linter} on {file_path}...", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            results = self.coder.index_manager.run_linter(file_path, linter)
+            
+            if not results['success']:
+                self.io.tool_error(f"Linting failed: {results.get('error', 'Unknown error')}")
+                self.log_command_end("cmd_lint", "error", results.get('error'))
+                return
+            
+            self.io.tool_output(f"\n✓ Linting completed!", log_only=False)
+            self.io.tool_output(f"  File: {results['file_path']}", log_only=False)
+            self.io.tool_output(f"  Linter: {results['linter']}", log_only=False)
+            
+            if 'issue_count' in results:
+                self.io.tool_output(f"  Issues found: {results['issue_count']}", log_only=False)
+            
+            if 'score' in results:
+                self.io.tool_output(f"  Score: {results['score']}/10", log_only=False)
+            
+            if 'issues' in results and results['issues']:
+                self.io.tool_output(f"\n  Issues:", log_only=False)
+                for issue in results['issues']:
+                    self.io.tool_output(f"    {issue}", log_only=False)
+            
+            if 'output' in results and results['output']:
+                self.io.tool_output(f"\n  Output:", log_only=False)
+                self.io.tool_output(results['output'], log_only=False)
+            
+            self.log_command_end("cmd_lint", "success", "Linting completed")
+            
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}")
+            self.log_command_end("cmd_lint", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_env(self, args):
         "Manage virtual environments"
         import subprocess

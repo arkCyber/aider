@@ -3587,6 +3587,544 @@ The infrastructure is ready for LLM integration.
             logger.error(f"Error applying diff hunk: {e}")
             return {'success': False, 'error': str(e)}
     
+    def create_project_from_template(self, template_name: str, project_name: str, 
+                                   output_dir: str = None, variables: Dict = None) -> Dict:
+        """
+        Create a new project from a template.
+        
+        This method implements project scaffolding similar to Cursor's template system,
+        allowing users to quickly create new projects with standardized structure.
+        
+        Args:
+            template_name: Name of the template to use
+            project_name: Name for the new project
+            output_dir: Directory to create the project in (default: current directory)
+            variables: Dictionary of template variables to substitute
+            
+        Returns:
+            Dictionary with creation result
+        """
+        try:
+            import shutil
+            
+            if variables is None:
+                variables = {}
+            
+            # Set default variables
+            variables.setdefault('PROJECT_NAME', project_name)
+            variables.setdefault('project_name', project_name.lower().replace('-', '_'))
+            variables.setdefault('ProjectName', project_name.replace('_', ' ').title())
+            
+            # Get template directory
+            template_dir = Path(__file__).parent.parent / 'templates' / template_name
+            
+            if not template_dir.exists():
+                # Try built-in templates
+                template_content = self._get_builtin_template(template_name, variables)
+                if not template_content:
+                    return {'success': False, 'error': f'Template {template_name} not found'}
+                
+                # Create project directory
+                if output_dir is None:
+                    output_dir = Path.cwd()
+                else:
+                    output_dir = Path(output_dir)
+                
+                project_dir = output_dir / project_name
+                project_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Write template files
+                for file_path, content in template_content.items():
+                    file_full_path = project_dir / file_path
+                    file_full_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(file_full_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                
+                return {
+                    'success': True,
+                    'project_name': project_name,
+                    'project_path': str(project_dir),
+                    'files_created': len(template_content),
+                    'template': template_name
+                }
+            
+            # Use external template directory
+            if output_dir is None:
+                output_dir = Path.cwd()
+            else:
+                output_dir = Path(output_dir)
+            
+            project_dir = output_dir / project_name
+            shutil.copytree(template_dir, project_dir)
+            
+            # Substitute variables in files
+            self._substitute_template_variables(project_dir, variables)
+            
+            return {
+                'success': True,
+                'project_name': project_name,
+                'project_path': str(project_dir),
+                'template': template_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating project from template: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _get_builtin_template(self, template_name: str, variables: Dict) -> Dict:
+        """
+        Get built-in template content.
+        
+        Args:
+            template_name: Name of the template
+            variables: Template variables to substitute
+            
+        Returns:
+            Dictionary mapping file paths to content
+        """
+        templates = {
+            'python-basic': {
+                'README.md': f"""# {variables.get('ProjectName', 'My Project')}
+
+## Description
+A basic Python project.
+
+## Installation
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+```bash
+python main.py
+```
+""",
+                'main.py': f"""#!/usr/bin/env python3
+\"\"\"
+Main entry point for {variables.get('project_name', 'my_project')}.
+\"\"\"
+
+def main():
+    print(f"Hello from {variables.get('project_name', 'my_project')}!")
+
+if __name__ == "__main__":
+    main()
+""",
+                'requirements.txt': """# Add your project dependencies here
+# Example:
+# requests>=2.28.0
+""",
+                '.gitignore': """# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+"""
+            },
+            'python-web-flask': {
+                'README.md': f"""# {variables.get('ProjectName', 'My Flask App')}
+
+## Description
+A basic Flask web application.
+
+## Installation
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+```bash
+export FLASK_APP=app.py
+flask run
+```
+
+## API Endpoints
+- GET / - Home page
+- GET /api/health - Health check
+""",
+                'app.py': f"""#!/usr/bin/env python3
+\"\"\"
+Flask application for {variables.get('project_name', 'my_flask_app')}.
+\"\"\"
+
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return jsonify({{
+        'message': 'Welcome to {variables.get('ProjectName', 'My Flask App')}!'
+    }})
+
+@app.route('/api/health')
+def health():
+    return jsonify({{
+        'status': 'healthy'
+    }})
+
+if __name__ == '__main__':
+    app.run(debug=True)
+""",
+                'requirements.txt': """Flask>=2.3.0
+Werkzeug>=2.3.0
+""",
+                '.gitignore': """# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Flask
+instance/
+.webassets-cache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+"""
+            },
+            'javascript-basic': {
+                'README.md': f"""# {variables.get('ProjectName', 'My JS Project')}
+
+## Description
+A basic JavaScript project.
+
+## Installation
+```bash
+npm install
+```
+
+## Usage
+```bash
+npm start
+```
+""",
+                'index.js': f"""/**
+ * Main entry point for {variables.get('project_name', 'my_project')}
+ */
+
+function main() {{
+    console.log('Hello from {variables.get('project_name', 'my_project')}!');
+}}
+
+main();
+""",
+                'package.json': f"""{{
+  "name": "{variables.get('project_name', 'my-project')}",
+  "version": "1.0.0",
+  "description": "A basic JavaScript project",
+  "main": "index.js",
+  "scripts": {{
+    "start": "node index.js",
+    "test": "echo \\"Error: no test specified\\" && exit 1"
+  }},
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}}
+""",
+                '.gitignore': """# Dependencies
+node_modules/
+
+# Build
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+"""
+            }
+        }
+        
+        if template_name not in templates:
+            return None
+        
+        # Substitute variables in template content
+        template_content = {}
+        for file_path, content in templates[template_name].items():
+            for key, value in variables.items():
+                content = content.replace(f'{{{{{key}}}}}', str(value))
+            template_content[file_path] = content
+        
+        return template_content
+    
+    def _substitute_template_variables(self, project_dir: Path, variables: Dict):
+        """
+        Substitute template variables in project files.
+        
+        Args:
+            project_dir: Project directory
+            variables: Variables to substitute
+        """
+        for file_path in project_dir.rglob('*'):
+            if file_path.is_file():
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Substitute variables
+                for key, value in variables.items():
+                    content = content.replace(f'{{{{{key}}}}}', str(value))
+                
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+    
+    def format_code(self, file_path: str, formatter: str = 'auto') -> Dict:
+        """
+        Format code using external formatting tools.
+        
+        This method integrates with popular code formatters like black, prettier,
+        and autopep8 to automatically format code according to style guidelines.
+        
+        Args:
+            file_path: Path to the file to format
+            formatter: Formatter to use ('auto', 'black', 'autopep8', 'prettier')
+            
+        Returns:
+            Dictionary with formatting result
+        """
+        try:
+            import subprocess
+            
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File does not exist'}
+            
+            # Auto-detect formatter based on file extension
+            if formatter == 'auto':
+                if file_path_obj.suffix == '.py':
+                    formatter = 'black'
+                elif file_path_obj.suffix in ['.js', '.jsx', '.ts', '.tsx', '.json']:
+                    formatter = 'prettier'
+                else:
+                    return {'success': False, 'error': f'No auto-formatter for {file_path_obj.suffix}'}
+            
+            # Run formatter
+            if formatter == 'black':
+                try:
+                    result = subprocess.run(
+                        ['black', str(file_path_obj)],
+                        capture_output=True,
+                        text=True
+                    )
+                    return {
+                        'success': True,
+                        'formatter': 'black',
+                        'file_path': str(file_path_obj),
+                        'output': result.stdout,
+                        'changed': 'reformatted' in result.stdout.lower()
+                    }
+                except FileNotFoundError:
+                    return {'success': False, 'error': 'black not found. Install with: pip install black'}
+            
+            elif formatter == 'autopep8':
+                try:
+                    result = subprocess.run(
+                        ['autopep8', '--in-place', str(file_path_obj)],
+                        capture_output=True,
+                        text=True
+                    )
+                    return {
+                        'success': True,
+                        'formatter': 'autopep8',
+                        'file_path': str(file_path_obj),
+                        'changed': True
+                    }
+                except FileNotFoundError:
+                    return {'success': False, 'error': 'autopep8 not found. Install with: pip install autopep8'}
+            
+            elif formatter == 'prettier':
+                try:
+                    result = subprocess.run(
+                        ['prettier', '--write', str(file_path_obj)],
+                        capture_output=True,
+                        text=True
+                    )
+                    return {
+                        'success': True,
+                        'formatter': 'prettier',
+                        'file_path': str(file_path_obj),
+                        'output': result.stdout,
+                        'changed': True
+                    }
+                except FileNotFoundError:
+                    return {'success': False, 'error': 'prettier not found. Install with: npm install -g prettier'}
+            
+            else:
+                return {'success': False, 'error': f'Unknown formatter: {formatter}'}
+            
+        except Exception as e:
+            logger.error(f"Error formatting code: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def run_linter(self, file_path: str, linter: str = 'auto') -> Dict:
+        """
+        Run linter on a file.
+        
+        This method integrates with popular linting tools like pylint, flake8,
+        and eslint to check code quality and identify potential issues.
+        
+        Args:
+            file_path: Path to the file to lint
+            linter: Linter to use ('auto', 'pylint', 'flake8', 'eslint')
+            
+        Returns:
+            Dictionary with linting result
+        """
+        try:
+            import subprocess
+            
+            file_path_obj = Path(file_path)
+            
+            if not file_path_obj.exists():
+                return {'success': False, 'error': 'File does not exist'}
+            
+            # Auto-detect linter based on file extension
+            if linter == 'auto':
+                if file_path_obj.suffix == '.py':
+                    linter = 'flake8'
+                elif file_path_obj.suffix in ['.js', '.jsx', '.ts', '.tsx']:
+                    linter = 'eslint'
+                else:
+                    return {'success': False, 'error': f'No auto-linter for {file_path_obj.suffix}'}
+            
+            # Run linter
+            if linter == 'flake8':
+                try:
+                    result = subprocess.run(
+                        ['flake8', str(file_path_obj)],
+                        capture_output=True,
+                        text=True
+                    )
+                    issues = result.stdout.strip().split('\n') if result.stdout.strip() else []
+                    return {
+                        'success': True,
+                        'linter': 'flake8',
+                        'file_path': str(file_path_obj),
+                        'issues': issues,
+                        'issue_count': len(issues)
+                    }
+                except FileNotFoundError:
+                    return {'success': False, 'error': 'flake8 not found. Install with: pip install flake8'}
+            
+            elif linter == 'pylint':
+                try:
+                    result = subprocess.run(
+                        ['pylint', str(file_path_obj), '--output-format=text'],
+                        capture_output=True,
+                        text=True
+                    )
+                    return {
+                        'success': True,
+                        'linter': 'pylint',
+                        'file_path': str(file_path_obj),
+                        'output': result.stdout,
+                        'score': self._extract_pylint_score(result.stdout)
+                    }
+                except FileNotFoundError:
+                    return {'success': False, 'error': 'pylint not found. Install with: pip install pylint'}
+            
+            elif linter == 'eslint':
+                try:
+                    result = subprocess.run(
+                        ['eslint', str(file_path_obj)],
+                        capture_output=True,
+                        text=True
+                    )
+                    issues = result.stdout.strip().split('\n') if result.stdout.strip() else []
+                    return {
+                        'success': True,
+                        'linter': 'eslint',
+                        'file_path': str(file_path_obj),
+                        'issues': issues,
+                        'issue_count': len(issues)
+                    }
+                except FileNotFoundError:
+                    return {'success': False, 'error': 'eslint not found. Install with: npm install -g eslint'}
+            
+            else:
+                return {'success': False, 'error': f'Unknown linter: {linter}'}
+            
+        except Exception as e:
+            logger.error(f"Error running linter: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _extract_pylint_score(self, pylint_output: str) -> float:
+        """
+        Extract pylint score from output.
+        
+        Args:
+            pylint_output: Pylint output string
+            
+        Returns:
+            Pylint score as float
+        """
+        import re
+        match = re.search(r'Your code has been rated at (\d+\.\d+)/10', pylint_output)
+        if match:
+            return float(match.group(1))
+        return 0.0
+    
     def track_collaboration_changes(self, file_path: str, changes: List[Dict]) -> Dict:
         """
         Track changes from collaboration.
