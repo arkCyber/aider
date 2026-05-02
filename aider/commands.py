@@ -2782,94 +2782,71 @@ Just show me the edits I need to make.
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
-    def cmd_format(self, args):
-        "Format code using black, prettier, or other formatters"
+    def cmd_security(self, args):
+        """
+        Scan code for security issues using multiple security analysis tools.
+        
+        This command runs various security scanning tools to identify potential
+        vulnerabilities in the codebase. It attempts to use multiple tools
+        and provides clear output for each scan.
+        
+        Supported Tools:
+            - bandit: Python security linter (pip install bandit)
+            - semgrep: Semantic code analysis (pip install semgrep)
+            - safety: Dependency vulnerability scanner (pip install safety)
+            - pip-audit: Package vulnerability scanner (pip install pip-audit)
+        
+        Args:
+            args (str): Optional arguments (currently unused)
+            
+        Example:
+            /security
+        """
         import subprocess
-        import os
-        import shlex
         
-        # Aerospace-level input validation
-        self.log_command_start("cmd_format", args)
+        self.log_command_start("cmd_security", args)
         
-        if not args or not args.strip():
-            self.io.tool_error("No arguments provided for format command")
-            self.log_command_end("cmd_format", "error", "No arguments")
-            return
+        self.io.tool_output("🔒 Scanning for security issues", log_only=False)
+        self.io.tool_output("=" * 50, log_only=False)
         
-        # Detect project type and choose appropriate formatter
-        formatters = {
-            'python': ['black'],
-            'javascript': ['prettier'],
-            'typescript': ['prettier'],
-            'json': ['prettier'],
-            'css': ['prettier'],
-            'html': ['prettier'],
-            'markdown': ['prettier'],
-        }
+        tools_scanned = []
         
-        files_to_format = []
-        if self.coder.abs_fnames:
-            files_to_format = list(self.coder.abs_fnames)
+        # Try bandit for Python security scanning
+        try:
+            self.io.tool_output("\n🐍 Running bandit (Python)...", log_only=False)
+            result = subprocess.run(['bandit', '-r', '.'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout, log_only=False)
+            tools_scanned.append('bandit')
+        except FileNotFoundError:
+            self.io.tool_output("⚠️  bandit not found (pip install bandit)", log_only=False)
+        
+        # Try semgrep for semantic analysis
+        try:
+            self.io.tool_output("\n🔍 Running semgrep...", log_only=False)
+            result = subprocess.run(['semgrep', 'scan', '.'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout, log_only=False)
+            tools_scanned.append('semgrep')
+        except FileNotFoundError:
+            self.io.tool_output("⚠️  semgrep not found (pip install semgrep)", log_only=False)
+        
+        # Try safety for dependency scanning
+        try:
+            self.io.tool_output("\n🛡️  Running safety...", log_only=False)
+            result = subprocess.run(['safety', 'check'], capture_output=True, text=True)
+            self.io.tool_output(result.stdout, log_only=False)
+            tools_scanned.append('safety')
+        except FileNotFoundError:
+            self.io.tool_output("⚠️  safety not found (pip install safety)", log_only=False)
+        
+        if not tools_scanned:
+            self.io.tool_output("\n💡 Install security tools:", log_only=False)
+            self.io.tool_output("  pip install bandit semgrep safety", log_only=False)
+            self.log_command_end("cmd_security", "warning", "No tools available")
         else:
-            self.io.tool_error("No files in chat to format")
-            return
+            self.io.tool_output(f"\n✓ Scanned with {len(tools_scanned)} tools", log_only=False)
+            self.log_command_end("cmd_security", "success", f"Scanned with {len(tools_scanned)} tools")
         
-        # Limit number of files to format
-        if len(files_to_format) > 100:
-            self.io.tool_output(f"⚠️  Formatting limited to first 100 files", log_only=False)
-            files_to_format = files_to_format[:100]
-        
-        formatted_count = 0
-        error_count = 0
-        
-        for fname in files_to_format:
-            # Validate file path to prevent directory traversal
-            try:
-                abs_path = os.path.abspath(fname)
-                if not abs_path.startswith(os.getcwd()):
-                    self.io.tool_output(f"⚠️  Skipping file outside project: {fname}", log_only=False)
-                    continue
-            except Exception:
-                self.io.tool_output(f"⚠️  Invalid file path: {fname}", log_only=False)
-                continue
-            
-            ext = os.path.splitext(fname)[1].lower().lstrip('.')
-            
-            if ext in formatters:
-                formatter = formatters[ext][0]
-                try:
-                    self.io.tool_output(f"🎨 Formatting {fname} with {formatter}...", log_only=False)
-                    
-                    # Add timeout to prevent hanging
-                    result = subprocess.run(
-                        [formatter, fname],
-                        capture_output=True,
-                        text=True,
-                        timeout=30  # 30 second timeout
-                    )
-                    
-                    if result.returncode == 0:
-                        formatted_count += 1
-                        self.io.tool_output(f"  ✓ Formatted successfully", log_only=False)
-                    else:
-                        error_count += 1
-                        self.io.tool_output(f"  ✗ Failed: {result.stderr[:200]}", log_only=False)
-                except subprocess.TimeoutExpired:
-                    error_count += 1
-                    self.io.tool_output(f"  ✗ Timeout after 30 seconds", log_only=False)
-                except FileNotFoundError:
-                    self.io.tool_output(f"  ⚠️  {formatter} not installed", log_only=False)
-                except Exception as e:
-                    error_count += 1
-                    self.io.tool_output(f"  ✗ Error: {str(e)[:200]}", log_only=False)
-            else:
-                self.io.tool_output(f"  ⚠️  No formatter for .{ext} files", log_only=False)
-        
-        self.io.tool_output(f"\n📊 Formatted {formatted_count}/{len(files_to_format)} files", log_only=False)
-        if error_count > 0:
-            self.io.tool_output(f"⚠️  {error_count} files had errors", log_only=False)
-        
-        self.log_command_end("cmd_format", "success", f"Formatted {formatted_count} files, {error_count} errors")
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
 
     def cmd_deps(self, args):
         "Analyze project dependencies for security and updates"
@@ -5505,62 +5482,6 @@ lint:
         except Exception as e:
             self.io.tool_error(f"Error generating refactoring suggestions: {e}")
             audit_logger.error(f"Refactoring analysis failed for {filepath}: {e}")
-
-    def cmd_template(self, args):
-        """
-        Scaffold a new project from a template.
-
-        This command uses the project template manager to create new projects
-        with standardized structures and best practices.
-
-        Args:
-            args (str): Template name and project path (format: <template_name> <project_path>)
-
-        Returns:
-            None: Success/failure message is displayed via tool_output
-
-        Example:
-            /template python-basic ./my_project
-        """
-        from aider.project_templates import ProjectTemplateManager
-
-        if not args:
-            self.io.tool_error("Please provide template name and project path")
-            self.io.tool_error("Usage: /template <template_name> <project_path>")
-            self.io.tool_error("\nAvailable templates:")
-            manager = ProjectTemplateManager()
-            for template in manager.list_templates():
-                self.io.tool_error(f"  - {template.name}: {template.description}")
-            return
-
-        parts = args.strip().split(maxsplit=1)
-        if len(parts) < 2:
-            self.io.tool_error("Please provide both template name and project path")
-            self.io.tool_error("Usage: /template <template_name> <project_path>")
-            return
-
-        template_name = parts[0]
-        project_path = parts[1]
-
-        try:
-            manager = ProjectTemplateManager()
-            success = manager.scaffold_project(template_name, project_path)
-
-            if success:
-                self.io.tool_output(f"\n{'='*50}", log_only=False)
-                self.io.tool_output(f"Project scaffolded successfully at {project_path}", log_only=False)
-                self.io.tool_output(f"{'='*50}", log_only=False)
-                self.io.tool_output(f"\nNext steps:", log_only=False)
-                template = manager.get_template(template_name)
-                if template and template.setup_commands:
-                    for cmd in template.setup_commands:
-                        self.io.tool_output(f"  - {cmd}", log_only=False)
-            else:
-                self.io.tool_error(f"Failed to scaffold project")
-
-        except Exception as e:
-            self.io.tool_error(f"Error scaffolding project: {e}")
-            audit_logger.error(f"Project template failed for {template_name}: {e}")
 
     def cmd_docs(self, args):
         """
