@@ -4571,6 +4571,68 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
+    def cmd_preview(self, args):
+        """
+        Start a live preview server for web projects.
+        
+        This command implements Windsurf's Live Previews feature.
+        
+        Args:
+            args: Project root path (optional, uses current directory if not specified)
+                  Optional port: /preview [path] [port]
+            
+        Examples:
+            /preview
+            /preview ./my-web-app
+            /preview ./my-web-app 8080
+        """
+        self.log_command_start("cmd_preview", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_preview", "error", "Index manager not available")
+                return
+            
+            # Parse arguments
+            parts = args.strip().split() if args and args.strip() else []
+            
+            if parts:
+                project_root = parts[0]
+                port = int(parts[1]) if len(parts) > 1 else 3000
+            else:
+                project_root = os.getcwd()
+                port = 3000
+            
+            self.io.tool_output(f"🌐 Starting live preview...", log_only=False)
+            self.io.tool_output(f"  Project: {project_root}", log_only=False)
+            self.io.tool_output(f"  Port: {port}", log_only=False)
+            self.io.tool_output("=" * 50, log_only=False)
+            
+            # Start live preview
+            result = self.coder.index_manager.start_live_preview(project_root, port)
+            
+            if result['success']:
+                self.io.tool_output(f"\n✓ Live preview started successfully!", log_only=False)
+                self.io.tool_output(f"  URL: {result['url']}", log_only=False)
+                self.io.tool_output(f"  Index file: {result.get('index_file', 'N/A')}", log_only=False)
+                self.io.tool_output(f"\n  Press Ctrl+C to stop the preview server", log_only=False)
+                self.io.tool_output(f"  Use /preview stop to stop the server", log_only=False)
+                
+                self.log_command_end("cmd_preview", "success", f"Preview started at {result['url']}")
+            else:
+                self.io.tool_error(f"\n✗ Failed to start preview: {result.get('error', 'Unknown error')}", log_only=False)
+                self.log_command_end("cmd_preview", "error", result.get('error'))
+            
+        except ValueError:
+            self.io.tool_error("Invalid port number. Port must be an integer.", log_only=False)
+            self.log_command_end("cmd_preview", "error", "Invalid port number")
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}", log_only=False)
+            self.log_command_end("cmd_preview", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_env(self, args):
         "Manage virtual environments"
         import subprocess

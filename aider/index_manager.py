@@ -2191,6 +2191,133 @@ class IndexManager:
             logger.error(f"Error executing natural language command: {e}")
             return {'success': False, 'error': str(e)}
 
+    def start_live_preview(self, project_root: str, port: int = 3000) -> Dict:
+        """
+        Start a live preview server for web projects.
+        
+        This implements Windsurf's Live Previews feature for real-time web preview.
+        
+        Args:
+            project_root: Path to the project root directory
+            port: Port number for the preview server
+            
+        Returns:
+            Dictionary with server information
+        """
+        try:
+            import http.server
+            import socketserver
+            import threading
+            import webbrowser
+            from pathlib import Path
+            
+            project_path = Path(project_root)
+            
+            if not project_path.exists():
+                return {'success': False, 'error': 'Project root does not exist'}
+            
+            # Find index file
+            index_files = ['index.html', 'index.htm', 'index.php', 'index.js', 'index.jsx']
+            index_file = None
+            for fname in index_files:
+                potential_file = project_path / fname
+                if potential_file.exists():
+                    index_file = potential_file
+                    break
+            
+            if not index_file:
+                # Check for common web directories
+                for dirname in ['public', 'dist', 'build', 'out', 'www']:
+                    dirpath = project_path / dirname
+                    if dirpath.exists() and dirpath.is_dir():
+                        for fname in index_files:
+                            potential_file = dirpath / fname
+                            if potential_file.exists():
+                                index_file = potential_file
+                                break
+                        if index_file:
+                            break
+            
+            if not index_file:
+                return {'success': False, 'error': 'No index file found in project'}
+            
+            # Change to project directory
+            original_cwd = os.getcwd()
+            os.chdir(str(index_file.parent))
+            
+            # Create handler
+            class PreviewHandler(http.server.SimpleHTTPRequestHandler):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, directory=str(index_file.parent), **kwargs)
+                
+                def end_headers(self):
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                    self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+                    super().end_headers()
+            
+            # Start server in background thread
+            handler = PreviewHandler
+            
+            try:
+                with socketserver.TCPServer(("", port), handler) as httpd:
+                    server_url = f"http://localhost:{port}"
+                    
+                    # Open browser
+                    webbrowser.open(server_url)
+                    
+                    # Store server info
+                    self._preview_server = httpd
+                    self._preview_port = port
+                    self._preview_url = server_url
+                    self._preview_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+                    self._preview_thread.start()
+                    
+                    logger.info(f"Live preview started at {server_url}")
+                    
+                    return {
+                        'success': True,
+                        'url': server_url,
+                        'port': port,
+                        'index_file': str(index_file),
+                        'message': f"Preview server running at {server_url}"
+                    }
+            except OSError as e:
+                if e.errno == 48:  # Address already in use
+                    return {'success': False, 'error': f'Port {port} is already in use'}
+                raise
+            finally:
+                os.chdir(original_cwd)
+            
+        except Exception as e:
+            logger.error(f"Error starting live preview: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def stop_live_preview(self) -> Dict:
+        """
+        Stop the live preview server.
+        
+        Returns:
+            Dictionary with stop result
+        """
+        try:
+            if hasattr(self, '_preview_server') and self._preview_server:
+                self._preview_server.shutdown()
+                self._preview_server.server_close()
+                del self._preview_server
+                del self._preview_port
+                del self._preview_url
+                del self._preview_thread
+                
+                logger.info("Live preview stopped")
+                return {'success': True, 'message': 'Preview server stopped'}
+            else:
+                return {'success': False, 'error': 'No preview server running'}
+            
+        except Exception as e:
+            logger.error(f"Error stopping live preview: {e}")
+            return {'success': False, 'error': str(e)}
+
     def get_symbol_hierarchy(self, file_path: str) -> Dict:
         """
         Get the symbol hierarchy for a file.
