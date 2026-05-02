@@ -4633,6 +4633,153 @@ theme:
         
         self.io.tool_output("\n" + "=" * 50, log_only=False)
 
+    def cmd_mcp(self, args):
+        """
+        Manage Model Context Protocol (MCP) tools.
+        
+        This command implements Windsurf's Model Context Protocol for connecting custom tools and services.
+        
+        Args:
+            args: MCP command and parameters
+                  Usage: /mcp <action> [parameters]
+                  Actions:
+                    - register <name> <endpoint> [auth]
+                    - call <name> [json_parameters]
+                    - list
+                    - unregister <name>
+            
+        Examples:
+            /mcp list
+            /mcp register mytool https://api.example.com/tool
+            /mcp call mytool '{"param": "value"}'
+            /mcp unregister mytool
+        """
+        self.log_command_start("cmd_mcp", args)
+        
+        try:
+            if not hasattr(self.coder, 'index_manager') or not self.coder.index_manager:
+                self.io.tool_error("Index manager not available. Run /index first.")
+                self.log_command_end("cmd_mcp", "error", "Index manager not available")
+                return
+            
+            if not args or not args.strip():
+                self.io.tool_error("Usage: /mcp <action> [parameters]")
+                self.io.tool_error("Actions: register, call, list, unregister")
+                self.log_command_end("cmd_mcp", "error", "No action specified")
+                return
+            
+            parts = args.strip().split(maxsplit=1)
+            action = parts[0]
+            
+            if action == 'list':
+                result = self.coder.index_manager.list_mcp_tools()
+                if result['success']:
+                    self.io.tool_output(f"\n📋 MCP Tools ({result['count']}):", log_only=False)
+                    for tool in result['tools']:
+                        self.io.tool_output(f"  • {tool['name']}", log_only=False)
+                        self.io.tool_output(f"    Endpoint: {tool['endpoint']}", log_only=False)
+                        self.io.tool_output(f"    Status: {tool['status']}", log_only=False)
+                        self.io.tool_output(f"    Registered: {tool['registered_at']}", log_only=False)
+                else:
+                    self.io.tool_error(f"Error: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_mcp", "success" if result['success'] else "error")
+            
+            elif action == 'register':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /mcp register <name> <endpoint> [auth]", log_only=False)
+                    self.log_command_end("cmd_mcp", "error", "Missing parameters")
+                    return
+                
+                register_parts = parts[1].split(maxsplit=2)
+                tool_name = register_parts[0]
+                endpoint = register_parts[1] if len(register_parts) > 1 else None
+                auth = register_parts[2] if len(register_parts) > 2 else None
+                
+                if not endpoint:
+                    self.io.tool_error("Endpoint is required", log_only=False)
+                    self.log_command_end("cmd_mcp", "error", "Missing endpoint")
+                    return
+                
+                tool_config = {
+                    'endpoint': endpoint,
+                    'method': 'POST',
+                    'headers': {'Content-Type': 'application/json'}
+                }
+                if auth:
+                    tool_config['auth'] = auth
+                
+                result = self.coder.index_manager.register_mcp_tool(tool_name, tool_config)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Tool registered successfully!", log_only=False)
+                    self.io.tool_output(f"  Name: {tool_name}", log_only=False)
+                    self.io.tool_output(f"  Endpoint: {endpoint}", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Registration failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_mcp", "success" if result['success'] else "error")
+            
+            elif action == 'call':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /mcp call <name> [json_parameters]", log_only=False)
+                    self.log_command_end("cmd_mcp", "error", "Missing tool name")
+                    return
+                
+                call_parts = parts[1].split(maxsplit=1)
+                tool_name = call_parts[0]
+                parameters = {}
+                
+                if len(call_parts) > 1:
+                    import json
+                    try:
+                        parameters = json.loads(call_parts[1])
+                    except json.JSONDecodeError:
+                        self.io.tool_error("Invalid JSON parameters", log_only=False)
+                        self.log_command_end("cmd_mcp", "error", "Invalid JSON")
+                        return
+                
+                result = self.coder.index_manager.call_mcp_tool(tool_name, parameters)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Tool called successfully!", log_only=False)
+                    self.io.tool_output(f"  Tool: {tool_name}", log_only=False)
+                    self.io.tool_output(f"  Status: {result['status_code']}", log_only=False)
+                    self.io.tool_output(f"  Result:", log_only=False)
+                    self.io.tool_output(f"    {result['result']}", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Tool call failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_mcp", "success" if result['success'] else "error")
+            
+            elif action == 'unregister':
+                if len(parts) < 2:
+                    self.io.tool_error("Usage: /mcp unregister <name>", log_only=False)
+                    self.log_command_end("cmd_mcp", "error", "Missing tool name")
+                    return
+                
+                tool_name = parts[1]
+                result = self.coder.index_manager.unregister_mcp_tool(tool_name)
+                
+                if result['success']:
+                    self.io.tool_output(f"\n✓ Tool unregistered successfully!", log_only=False)
+                    self.io.tool_output(f"  Name: {tool_name}", log_only=False)
+                else:
+                    self.io.tool_error(f"\n✗ Unregistration failed: {result.get('error', 'Unknown error')}", log_only=False)
+                
+                self.log_command_end("cmd_mcp", "success" if result['success'] else "error")
+            
+            else:
+                self.io.tool_error(f"Unknown action: {action}", log_only=False)
+                self.io.tool_error("Actions: register, call, list, unregister", log_only=False)
+                self.log_command_end("cmd_mcp", "error", f"Unknown action: {action}")
+        
+        except Exception as e:
+            self.io.tool_error(f"Error: {e}", log_only=False)
+            self.log_command_end("cmd_mcp", "error", str(e)[:100])
+        
+        self.io.tool_output("\n" + "=" * 50, log_only=False)
+
     def cmd_env(self, args):
         "Manage virtual environments"
         import subprocess

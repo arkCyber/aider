@@ -2318,6 +2318,158 @@ class IndexManager:
             logger.error(f"Error stopping live preview: {e}")
             return {'success': False, 'error': str(e)}
 
+    def register_mcp_tool(self, tool_name: str, tool_config: Dict) -> Dict:
+        """
+        Register a Model Context Protocol (MCP) tool.
+        
+        This implements Windsurf's Model Context Protocol for connecting custom tools and services.
+        
+        Args:
+            tool_name: Name of the tool
+            tool_config: Tool configuration (endpoint, auth, etc.)
+            
+        Returns:
+            Dictionary with registration result
+        """
+        try:
+            # Store tool configuration
+            if not hasattr(self, '_mcp_tools'):
+                self._mcp_tools = {}
+            
+            self._mcp_tools[tool_name] = {
+                'name': tool_name,
+                'config': tool_config,
+                'registered_at': datetime.now().isoformat(),
+                'status': 'active'
+            }
+            
+            logger.info(f"MCP tool registered: {tool_name}")
+            
+            return {
+                'success': True,
+                'tool_name': tool_name,
+                'message': f'Tool {tool_name} registered successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error registering MCP tool: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def call_mcp_tool(self, tool_name: str, parameters: Dict) -> Dict:
+        """
+        Call a registered MCP tool.
+        
+        Args:
+            tool_name: Name of the tool to call
+            parameters: Parameters for the tool
+            
+        Returns:
+            Dictionary with tool execution result
+        """
+        try:
+            if not hasattr(self, '_mcp_tools') or tool_name not in self._mcp_tools:
+                return {'success': False, 'error': f'Tool {tool_name} not found'}
+            
+            tool_info = self._mcp_tools[tool_name]
+            config = tool_info['config']
+            
+            # Make HTTP request to tool endpoint
+            import requests
+            
+            endpoint = config.get('endpoint')
+            method = config.get('method', 'POST')
+            headers = config.get('headers', {})
+            auth = config.get('auth')
+            
+            if not endpoint:
+                return {'success': False, 'error': 'Tool configuration missing endpoint'}
+            
+            if auth:
+                headers['Authorization'] = f"Bearer {auth}"
+            
+            if method.upper() == 'GET':
+                response = requests.get(endpoint, headers=headers, params=parameters, timeout=30)
+            else:
+                response = requests.post(endpoint, headers=headers, json=parameters, timeout=30)
+            
+            response.raise_for_status()
+            
+            result = response.json() if response.headers.get('content-type', '').startswith('application/json') else {'data': response.text}
+            
+            logger.info(f"MCP tool called: {tool_name}")
+            
+            return {
+                'success': True,
+                'tool_name': tool_name,
+                'result': result,
+                'status_code': response.status_code
+            }
+            
+        except requests.RequestException as e:
+            logger.error(f"Error calling MCP tool {tool_name}: {e}")
+            return {'success': False, 'error': f'Tool call failed: {str(e)}'}
+        except Exception as e:
+            logger.error(f"Error calling MCP tool: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def list_mcp_tools(self) -> Dict:
+        """
+        List all registered MCP tools.
+        
+        Returns:
+            Dictionary with list of tools
+        """
+        try:
+            if not hasattr(self, '_mcp_tools'):
+                return {'success': True, 'tools': []}
+            
+            tools = []
+            for tool_name, tool_info in self._mcp_tools.items():
+                tools.append({
+                    'name': tool_name,
+                    'endpoint': tool_info['config'].get('endpoint', 'N/A'),
+                    'status': tool_info['status'],
+                    'registered_at': tool_info['registered_at']
+                })
+            
+            return {
+                'success': True,
+                'tools': tools,
+                'count': len(tools)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error listing MCP tools: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def unregister_mcp_tool(self, tool_name: str) -> Dict:
+        """
+        Unregister an MCP tool.
+        
+        Args:
+            tool_name: Name of the tool to unregister
+            
+        Returns:
+            Dictionary with unregistration result
+        """
+        try:
+            if not hasattr(self, '_mcp_tools') or tool_name not in self._mcp_tools:
+                return {'success': False, 'error': f'Tool {tool_name} not found'}
+            
+            del self._mcp_tools[tool_name]
+            
+            logger.info(f"MCP tool unregistered: {tool_name}")
+            
+            return {
+                'success': True,
+                'tool_name': tool_name,
+                'message': f'Tool {tool_name} unregistered successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error unregistering MCP tool: {e}")
+            return {'success': False, 'error': str(e)}
+
     def get_symbol_hierarchy(self, file_path: str) -> Dict:
         """
         Get the symbol hierarchy for a file.
