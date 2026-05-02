@@ -3344,81 +3344,148 @@ The infrastructure is ready for LLM integration.
         suggestions = []
         
         if completion_type == 'import':
-            # Common Python imports
+            # Common Python imports with more comprehensive list
             common_imports = [
                 'os', 'sys', 'json', 're', 'datetime', 'pathlib',
                 'typing', 'dataclasses', 'collections', 'itertools',
-                'math', 'random', 'statistics', 'functools'
+                'math', 'random', 'statistics', 'functools',
+                'time', 'uuid', 'hashlib', 'base64', 'subprocess',
+                'threading', 'multiprocessing', 'queue', 'logging',
+                'argparse', 'configparser', 'copy', 'pprint', 'pickle'
             ]
-            for imp in common_imports:
-                if imp.startswith(line_prefix.split()[-1]):
+            # Third-party common imports
+            third_party = [
+                'numpy', 'pandas', 'requests', 'flask', 'django',
+                'pytest', 'sqlalchemy', 'matplotlib', 'scipy'
+            ]
+            all_imports = common_imports + third_party
+            
+            prefix = line_prefix.split()[-1] if line_prefix.split() else ''
+            for imp in all_imports:
+                if imp.startswith(prefix):
                     suggestions.append({
-                        'text': imp,
+                        'text': imp[len(prefix):],
                         'type': 'module',
                         'description': f'Import {imp}'
                     })
         
         elif completion_type == 'function':
-            # Common function patterns
+            # Common function patterns with better suggestions
             if 'def ' in line_prefix:
                 func_name = line_prefix.split('def ')[1].strip()
+                suggestions.append({
+                    'text': f'(self):\n    """',
+                    'type': 'snippet',
+                    'description': 'Method with docstring'
+                })
+                suggestions.append({
+                    'text': f'():\n    """',
+                    'type': 'snippet',
+                    'description': 'Function with docstring'
+                })
                 suggestions.append({
                     'text': f'():\n    pass',
                     'type': 'snippet',
                     'description': 'Function definition'
                 })
+            elif 'class ' in context:
+                # Inside a class, suggest method patterns
+                suggestions.append({
+                    'text': 'def __init__(self):\n    """',
+                    'type': 'snippet',
+                    'description': 'Constructor'
+                })
+                suggestions.append({
+                    'text': 'def __str__(self):\n    return',
+                    'type': 'snippet',
+                    'description': 'String representation'
+                })
+                suggestions.append({
+                    'text': 'def __repr__(self):\n    return',
+                    'type': 'snippet',
+                    'description': 'Representation'
+                })
         
         elif completion_type == 'variable':
-            # Suggest variable names based on context
+            # Suggest variable names based on context with more intelligence
             words = context.split()
             if words:
                 last_word = words[-1].strip('.,;:()')
                 if last_word:
+                    # Common variable naming patterns
                     suggestions.append({
                         'text': f' {last_word.lower()}',
                         'type': 'variable',
                         'description': 'Variable suggestion'
                     })
+                    # Camel case suggestion
+                    suggestions.append({
+                        'text': f' {last_word[0].lower() + last_word[1:]}',
+                        'type': 'variable',
+                        'description': 'Camel case variable'
+                    })
+                    # With type hint
+                    suggestions.append({
+                        'text': f': {last_word} =',
+                        'type': 'variable',
+                        'description': 'Type hinted variable'
+                    })
         
         elif completion_type == 'function_call':
-            # Complete function calls
+            # Complete function calls with better suggestions
             func_name = line_prefix.split('(')[0].strip()
             suggestions.append({
                 'text': ')',
                 'type': 'syntax',
                 'description': 'Close parenthesis'
             })
+            # Suggest common parameters
+            if func_name == 'print':
+                suggestions.append({
+                    'text': f', end="")',
+                    'type': 'snippet',
+                    'description': 'Print with custom end'
+                })
+                suggestions.append({
+                    'text': f', sep=" ")',
+                    'type': 'snippet',
+                    'description': 'Print with custom separator'
+                })
         
         else:
-            # General completion - suggest from indexed symbols
+            # General completion - suggest from indexed symbols with better filtering
             try:
                 conn = sqlite3.connect(str(self.index_db_path))
                 cursor = conn.cursor()
                 
                 # Get symbols from current file and similar files
+                prefix = line_prefix.split()[-1] if line_prefix.split() else ''
                 cursor.execute("""
                     SELECT DISTINCT name, kind
                     FROM symbols
                     WHERE name LIKE ?
+                    ORDER BY kind, name
                     LIMIT 10
-                """, (f'{line_prefix.split()[-1]}%',))
+                """, (f'{prefix}%',))
                 
                 for row in cursor.fetchall():
                     name, kind = row
-                    suggestions.append({
-                        'text': name[len(line_prefix.split()[-1]):],
-                        'type': kind,
-                        'description': f'{kind} {name}'
-                    })
+                    # Only suggest if it's a completion
+                    if name.startswith(prefix):
+                        suggestions.append({
+                            'text': name[len(prefix):],
+                            'type': kind,
+                            'description': f'{kind} {name}'
+                        })
                 
                 conn.close()
+                
             except Exception as e:
                 logger.debug(f"Error getting symbol suggestions: {e}")
         
         return suggestions[:10]  # Limit to top 10 suggestions
     
-    def get_inline_completion(self, file_path: str, cursor_line: int, 
-                            cursor_col: int) -> Dict:
+    def get_inline_completion(self, file_path: str, cursor_line: int, cursor_col: int) -> Dict:
         """
         Get inline code completion for the current cursor position.
         
