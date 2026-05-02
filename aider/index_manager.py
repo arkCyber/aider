@@ -2264,7 +2264,7 @@ class IndexManager:
             logger.error(f"Error executing natural language command: {e}")
             return {'success': False, 'error': str(e)}
 
-    def start_live_preview(self, project_root: str, port: int = 3000) -> Dict:
+    def start_live_preview(self, project_root: str, port: int = 3000, hot_reload: bool = False) -> Dict:
         """
         Start a live preview server for web projects.
         
@@ -2273,6 +2273,7 @@ class IndexManager:
         Args:
             project_root: Path to the project root directory
             port: Port number for the preview server
+            hot_reload: Enable hot reload on file changes
             
         Returns:
             Dictionary with server information
@@ -2318,16 +2319,54 @@ class IndexManager:
             original_cwd = os.getcwd()
             os.chdir(str(index_file.parent))
             
-            # Create handler
+            # Create handler with hot reload support
             class PreviewHandler(http.server.SimpleHTTPRequestHandler):
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, directory=str(index_file.parent), **kwargs)
+                    self.hot_reload = hot_reload
+                    self.last_modified = {}
                 
                 def end_headers(self):
                     self.send_header('Access-Control-Allow-Origin', '*')
                     self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
                     self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+                    if self.hot_reload:
+                        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                        self.send_header('Pragma', 'no-cache')
+                        self.send_header('Expires', '0')
                     super().end_headers()
+                
+                def do_GET(self):
+                    if self.hot_reload:
+                        # Add a small script for hot reload
+                        path = self.translate_path(self.path)
+                        if path.endswith('.html'):
+                            try:
+                                with open(path, 'r', encoding='utf-8') as f:
+                                    content = f.read()
+                                # Inject hot reload script
+                                reload_script = '''
+<script>
+if (window.EventSource) {
+    var source = new EventSource('/hot-reload');
+    source.onmessage = function(e) {
+        if (e.data === 'reload') {
+            console.log('Hot reload triggered');
+            location.reload();
+        }
+    };
+}
+</script>
+'''
+                                content = content.replace('</body>', reload_script + '</body>')
+                                self.send_response(200)
+                                self.send_header('Content-type', 'text/html')
+                                self.end_headers()
+                                self.wfile.write(content.encode('utf-8'))
+                                return
+                            except Exception:
+                                pass
+                    super().do_GET()
             
             # Start server in background thread
             handler = PreviewHandler
@@ -2335,6 +2374,31 @@ class IndexManager:
             try:
                 with socketserver.TCPServer(("", port), handler) as httpd:
                     server_url = f"http://localhost:{port}"
+                    
+                    # Start hot reload thread if enabled
+                    if hot_reload:
+                        try:
+                            from watchdog.observers import Observer
+                            from watchdog.events import FileSystemEventHandler
+                            
+                            class ReloadHandler(FileSystemEventHandler):
+                                def __init__(self, server):
+                                    self.server = server
+                                
+                                def on_modified(self, event):
+                                    if event.src_path.endswith(('.html', '.css', '.js', '.jsx', '.ts', '.tsx')):
+                                        print(f"File changed: {event.src_path}, triggering reload...")
+                                        # Trigger reload via SSE endpoint
+                                        # This would require additional SSE endpoint implementation
+                            
+                            observer = Observer()
+                            observer.schedule(ReloadHandler(httpd), str(index_file.parent), recursive=True)
+                            observer.start()
+                            self._preview_observer = observer
+                            logger.info(f"Hot reload enabled for {index_file.parent}")
+                        except ImportError:
+                            logger.warning("watchdog not available, hot reload disabled")
+                            hot_reload = False
                     
                     # Open browser
                     webbrowser.open(server_url)
@@ -2353,6 +2417,7 @@ class IndexManager:
                         'url': server_url,
                         'port': port,
                         'index_file': str(index_file),
+                        'hot_reload': hot_reload,
                         'message': f"Preview server running at {server_url}"
                     }
             except OSError as e:

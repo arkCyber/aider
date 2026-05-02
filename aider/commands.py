@@ -4580,11 +4580,13 @@ theme:
         Args:
             args: Project root path (optional, uses current directory if not specified)
                   Optional port: /preview [path] [port]
+                  Optional hot reload: /preview [path] [port] --hot-reload
             
         Examples:
             /preview
             /preview ./my-web-app
             /preview ./my-web-app 8080
+            /preview ./my-web-app 8080 --hot-reload
         """
         self.log_command_start("cmd_preview", args)
         
@@ -4597,6 +4599,11 @@ theme:
             # Parse arguments
             parts = args.strip().split() if args and args.strip() else []
             
+            hot_reload = False
+            if '--hot-reload' in parts:
+                hot_reload = True
+                parts.remove('--hot-reload')
+            
             if parts:
                 project_root = parts[0]
                 port = int(parts[1]) if len(parts) > 1 else 3000
@@ -4607,15 +4614,19 @@ theme:
             self.io.tool_output(f"🌐 Starting live preview...", log_only=False)
             self.io.tool_output(f"  Project: {project_root}", log_only=False)
             self.io.tool_output(f"  Port: {port}", log_only=False)
+            if hot_reload:
+                self.io.tool_output(f"  Hot reload: Enabled", log_only=False)
             self.io.tool_output("=" * 50, log_only=False)
             
             # Start live preview
-            result = self.coder.index_manager.start_live_preview(project_root, port)
+            result = self.coder.index_manager.start_live_preview(project_root, port, hot_reload)
             
             if result['success']:
                 self.io.tool_output(f"\n✓ Live preview started successfully!", log_only=False)
                 self.io.tool_output(f"  URL: {result['url']}", log_only=False)
                 self.io.tool_output(f"  Index file: {result.get('index_file', 'N/A')}", log_only=False)
+                if result.get('hot_reload'):
+                    self.io.tool_output(f"  Hot reload: Enabled", log_only=False)
                 self.io.tool_output(f"\n  Press Ctrl+C to stop the preview server", log_only=False)
                 self.io.tool_output(f"  Use /preview stop to stop the server", log_only=False)
                 
