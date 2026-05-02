@@ -372,12 +372,7 @@ class IndexManager:
                 )
             """)
             
-            # Create indexes for better query performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path)")
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_references_symbol ON "references"(symbol_name)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_references_from ON "references"(from_file)')
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path)")
+            # Create additional indexes for better query performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_history_sha ON git_history(commit_sha)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_file_history_sha ON git_file_history(commit_sha)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_git_file_history_file ON git_file_history(file_path)")
@@ -404,6 +399,7 @@ class IndexManager:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_name ON sessions(name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_context ON sessions(context)")
             
             # Create tasks table for session tasks
             cursor.execute("""
@@ -421,6 +417,7 @@ class IndexManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_description ON tasks(description)")
             
             # Create workspaces table for Workspace Management (Spaces)
             cursor.execute("""
@@ -435,6 +432,7 @@ class IndexManager:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_name ON workspaces(name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_description ON workspaces(description)")
             
             # Create workspace_sessions table for linking workspaces and sessions
             cursor.execute("""
@@ -2738,19 +2736,19 @@ if (window.EventSource) {
             conn = sqlite3.connect(str(self.index_db_path))
             cursor = conn.cursor()
             
+            # Optimized single query with task count using LEFT JOIN
             cursor.execute("""
-                SELECT id, name, context, created_at, status
-                FROM sessions
-                ORDER BY created_at DESC
+                SELECT s.id, s.name, s.context, s.created_at, s.status,
+                       COUNT(t.id) as task_count
+                FROM sessions s
+                LEFT JOIN tasks t ON s.id = t.session_id
+                GROUP BY s.id
+                ORDER BY s.created_at DESC
             """)
             
             sessions = []
             for row in cursor.fetchall():
-                session_id, name, context_json, created_at, status = row
-                
-                # Get task count for this session
-                cursor.execute("SELECT COUNT(*) FROM tasks WHERE session_id = ?", (session_id,))
-                task_count = cursor.fetchone()[0]
+                session_id, name, context_json, created_at, status, task_count = row
                 
                 # Deserialize context if present
                 context = json.loads(context_json) if context_json else {}
@@ -2832,7 +2830,7 @@ if (window.EventSource) {
 
     def get_session_tasks(self, session_id: str) -> Dict:
         """
-        Get all tasks for a session.
+        Get all tasks in a session.
         
         Args:
             session_id: ID of the session
@@ -2850,6 +2848,7 @@ if (window.EventSource) {
                 conn.close()
                 return {'success': False, 'error': f'Session {session_id} not found'}
             
+            # Single query to get all tasks
             cursor.execute("""
                 SELECT id, description, type, status, created_at, updated_at
                 FROM tasks
@@ -2860,6 +2859,7 @@ if (window.EventSource) {
             tasks = []
             for row in cursor.fetchall():
                 task_id, description, task_type, status, created_at, updated_at = row
+                
                 tasks.append({
                     'id': task_id,
                     'description': description,
@@ -3134,19 +3134,19 @@ if (window.EventSource) {
             conn = sqlite3.connect(str(self.index_db_path))
             cursor = conn.cursor()
             
+            # Optimized single query with session count using LEFT JOIN
             cursor.execute("""
-                SELECT id, name, description, context, created_at, status
-                FROM workspaces
-                ORDER BY created_at DESC
+                SELECT w.id, w.name, w.description, w.context, w.created_at, w.status,
+                       COUNT(ws.id) as session_count
+                FROM workspaces w
+                LEFT JOIN workspace_sessions ws ON w.id = ws.workspace_id
+                GROUP BY w.id
+                ORDER BY w.created_at DESC
             """)
             
             workspaces = []
             for row in cursor.fetchall():
-                workspace_id, name, description, context_json, created_at, status = row
-                
-                # Get session count for this workspace
-                cursor.execute("SELECT COUNT(*) FROM workspace_sessions WHERE workspace_id = ?", (workspace_id,))
-                session_count = cursor.fetchone()[0]
+                workspace_id, name, description, context_json, created_at, status, session_count = row
                 
                 # Deserialize context if present
                 context = json.loads(context_json) if context_json else {}
@@ -3288,21 +3288,21 @@ if (window.EventSource) {
                 conn.close()
                 return {'success': False, 'error': f'Workspace {workspace_id} not found'}
             
+            # Optimized single query with task count using LEFT JOIN
             cursor.execute("""
-                SELECT s.id, s.name, s.context, s.created_at, s.status, ws.added_at
+                SELECT s.id, s.name, s.context, s.created_at, s.status, ws.added_at,
+                       COUNT(t.id) as task_count
                 FROM sessions s
                 INNER JOIN workspace_sessions ws ON s.id = ws.session_id
+                LEFT JOIN tasks t ON s.id = t.session_id
                 WHERE ws.workspace_id = ?
+                GROUP BY s.id
                 ORDER BY ws.added_at ASC
             """, (workspace_id,))
             
             sessions = []
             for row in cursor.fetchall():
-                session_id, name, context_json, created_at, status, added_at = row
-                
-                # Get task count for this session
-                cursor.execute("SELECT COUNT(*) FROM tasks WHERE session_id = ?", (session_id,))
-                task_count = cursor.fetchone()[0]
+                session_id, name, context_json, created_at, status, added_at, task_count = row
                 
                 # Deserialize context if present
                 context = json.loads(context_json) if context_json else {}
